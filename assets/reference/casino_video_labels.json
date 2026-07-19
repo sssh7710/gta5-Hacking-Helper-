@@ -1,0 +1,31 @@
+{
+  "completed_selections": [
+    {
+      "seconds": 12.48,
+      "selected": [
+        2,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "seconds": 24.19,
+      "selected": [
+        1,
+        4,
+        6,
+        7
+      ]
+    },
+    {
+      "seconds": 30.0,
+      "selected": [
+        3,
+        4,
+        5,
+        7
+      ]
+    }
+  ]
+}

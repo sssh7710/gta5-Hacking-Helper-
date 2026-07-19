@@ -1,0 +1,12 @@
+.venv/
+.codex-remote-attachments/
+__pycache__/
+*.py[cod]
+config.json
+diagnostics/*
+!diagnostics/.gitkeep
+assets/reference/*
+!assets/reference/.gitkeep
+!assets/reference/SOURCES.md
+!assets/reference/casino_video_labels.json
+!assets/reference/casino_templates.json
