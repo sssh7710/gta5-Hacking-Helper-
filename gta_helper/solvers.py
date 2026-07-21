@@ -30,6 +30,35 @@ def _score_template(target: np.ndarray, piece: np.ndarray) -> float:
     return float(cv2.minMaxLoc(cv2.matchTemplate(target_edge, piece_edge, cv2.TM_CCOEFF_NORMED))[1])
 
 
+def _score_fingerprint_piece(target: np.ndarray, piece: np.ndarray) -> float:
+    """후보 테두리를 제외하고 전체 지문 안에서 다중 크기로 조각을 찾는다."""
+    target_gray = cv2.cvtColor(target, cv2.COLOR_BGR2GRAY) if target.ndim == 3 else target
+    piece_gray = cv2.cvtColor(piece, cv2.COLOR_BGR2GRAY) if piece.ndim == 3 else piece
+    height, width = piece_gray.shape
+    margin_y, margin_x = round(height * .12), round(width * .12)
+    piece_gray = piece_gray[margin_y:height - margin_y, margin_x:width - margin_x]
+    if min(target_gray.shape) < 24 or min(piece_gray.shape) < 12:
+        return -1.0
+
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+    target_gray = clahe.apply(target_gray)
+    piece_gray = clahe.apply(piece_gray)
+    best = -1.0
+    for scale in np.arange(.50, 1.71, .05):
+        resized = cv2.resize(
+            piece_gray,
+            None,
+            fx=float(scale),
+            fy=float(scale),
+            interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC,
+        )
+        if resized.shape[0] >= target_gray.shape[0] or resized.shape[1] >= target_gray.shape[1]:
+            continue
+        score = float(cv2.minMaxLoc(cv2.matchTemplate(target_gray, resized, cv2.TM_CCOEFF_NORMED))[1])
+        best = max(best, score)
+    return best
+
+
 class DotMemorySolver:
     """점멸 패턴을 프레임 전환 단위로 모아 마지막 반복 패턴을 확정한다."""
 
@@ -39,6 +68,7 @@ class DotMemorySolver:
         self._counts: Counter[tuple[GridPoint, ...]] = Counter()
         self._last_result: tuple[GridPoint, ...] | None = None
         self._grid_visible = False
+        self._red_input_visible = False
         self._missing_grid_frames = 0
         self._inactive_grid_frames = 0
         self.current_pattern: tuple[GridPoint, ...] = ()
@@ -49,6 +79,7 @@ class DotMemorySolver:
         self._counts.clear()
         self._last_result = None
         self._grid_visible = False
+        self._red_input_visible = False
         self._missing_grid_frames = 0
         self._inactive_grid_frames = 0
         self.current_pattern = ()
@@ -66,6 +97,7 @@ class DotMemorySolver:
 
     def _detect(self, frame: np.ndarray) -> tuple[tuple[GridPoint, ...], float] | None:
         self._grid_visible = False
+        self._red_input_visible = False
         self.current_pattern = ()
         self.current_grid_shape = (0, 0)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -115,26 +147,35 @@ class DotMemorySolver:
         # 흰색 선택 테두리와 어두운 격자 무늬는 제외한다.
         cyan = cv2.inRange(hsv, (70, 80, 70), (135, 255, 255))
         red = cv2.bitwise_or(cv2.inRange(hsv, (0, 90, 80), (15, 255, 255)), cv2.inRange(hsv, (165, 90, 80), (179, 255, 255)))
-        signal = cv2.bitwise_or(cyan, red)
-        values: list[tuple[GridPoint, float]] = []
+        values: list[tuple[GridPoint, float, float]] = []
         sample_radius = max(6, round(median_radius * .48))
         for row, y in enumerate(ys, start=1):
             for column, x in enumerate(xs, start=1):
                 top, bottom = max(0, y - sample_radius), min(height, y + sample_radius + 1)
                 left, right = max(0, x - sample_radius), min(width, x + sample_radius + 1)
-                patch = signal[top:bottom, left:right]
-                yy, xx = np.ogrid[:patch.shape[0], :patch.shape[1]]
+                cyan_patch = cyan[top:bottom, left:right]
+                red_patch = red[top:bottom, left:right]
+                yy, xx = np.ogrid[:cyan_patch.shape[0], :cyan_patch.shape[1]]
                 disk = (xx - (x - left)) ** 2 + (yy - (y - top)) ** 2 <= sample_radius ** 2
-                coverage = float(np.mean(patch[disk])) / 255.0
-                values.append((GridPoint(row, column), coverage))
+                cyan_coverage = float(np.mean(cyan_patch[disk])) / 255.0
+                red_coverage = float(np.mean(red_patch[disk])) / 255.0
+                values.append((GridPoint(row, column), cyan_coverage, red_coverage))
 
-        coverage = np.array([value for _, value in values])
+        red_coverage = np.array([red_value for _, _, red_value in values])
+        red_threshold = max(.035, float(np.median(red_coverage)) + .025)
+        self._red_input_visible = bool(np.any(red_coverage >= red_threshold))
+        if self._red_input_visible:
+            # 빨간 원은 사용자가 답을 입력하는 단계다. 이전 답의 잠금을 풀되
+            # 빨간 선택 이력을 다음 정답 패턴으로 세지 않는다.
+            return None
+
+        coverage = np.array([cyan_value for _, cyan_value, _ in values])
         threshold = max(.035, float(np.median(coverage)) + .025)
-        active = tuple(point for point, value in values if value >= threshold)
-        # 카지노 6×5 패턴은 완성 시 5~6개, 코르츠 5×4 패턴은 3개가 켜진다.
-        # 한두 점만 켜진 애니메이션 중간 프레임을 정답으로 고정하지 않는다.
-        minimum_active = 5 if (len(xs), len(ys)) == (6, 5) else 3
-        if not minimum_active <= len(active) <= len(xs):
+        active = tuple(point for point, cyan_value, _ in values if cyan_value >= threshold)
+        # 카지노 6×5 패턴은 완성 시 6개, 코르츠 5×4 패턴은 3개가 켜진다.
+        # 완성 전 중간 프레임을 정답으로 고정하지 않는다.
+        expected_active = 6 if (len(xs), len(ys)) == (6, 5) else 3
+        if len(active) != expected_active:
             return None
         self.current_pattern = active
         regularity = min(1.0, occupied / (len(xs) * len(ys)))
@@ -146,7 +187,11 @@ class DotMemorySolver:
             self._previous = None
             if self._grid_visible:
                 self._missing_grid_frames = 0
-                if self._last_result is not None:
+                if self._red_input_visible:
+                    self._counts.clear()
+                    self._last_result = None
+                    self._inactive_grid_frames = 0
+                elif self._last_result is not None:
                     self._inactive_grid_frames += 1
                     if self._inactive_grid_frames >= 15:
                         self._counts.clear()
@@ -163,9 +208,10 @@ class DotMemorySolver:
         if self._last_result is not None:
             return None
         pattern, regularity = detected
-        if pattern != self._previous:
-            self._counts[pattern] += 1
-            self._previous = pattern
+        # 점멸 사이의 매우 짧은 암전 프레임을 캡처가 놓쳐도 같은 완성 패턴을
+        # 연속 두 프레임 확인하면 반복 표시로 인정한다.
+        self._counts[pattern] += 1
+        self._previous = pattern
         count = self._counts[pattern]
         if count >= self.repeats_needed and pattern != self._last_result:
             self._last_result = pattern
@@ -183,7 +229,7 @@ class DotMemorySolver:
 
 class FragmentFingerprintSolver:
     def solve_regions(self, target: np.ndarray, candidates: Iterable[np.ndarray]) -> SolveResult | None:
-        scored = [(index + 1, _score_template(target, candidate)) for index, candidate in enumerate(candidates)]
+        scored = [(index + 1, _score_fingerprint_piece(target, candidate)) for index, candidate in enumerate(candidates)]
         if len(scored) < 4:
             return None
         scored.sort(key=lambda item: item[1], reverse=True)
@@ -192,7 +238,7 @@ class FragmentFingerprintSolver:
         # 4위 조각이 충분히 맞고, 5위와의 차이도 뚜렷할 때만 답을 낸다.
         fifth_score = scored[4][1] if len(scored) > 4 else -1.0
         margin = selected[-1][1] - fifth_score
-        if selected[-1][1] < 0.22 or margin < 0.035:
+        if selected[-1][1] < 0.55 or margin < 0.08:
             return None
         confidence = max(0.0, min(0.99, float(np.mean([score for _, score in selected]))))
         return SolveResult(
