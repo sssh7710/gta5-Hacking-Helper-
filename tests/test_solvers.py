@@ -74,7 +74,7 @@ class SolverTests(unittest.TestCase):
         self.assertEqual([(point.row, point.column) for point in result.locations], [(1, 2), (1, 6), (2, 4), (3, 5), (4, 3), (5, 1)])
         self.assertGreaterEqual(result.confidence, 0.68)
 
-    def test_dot_solver_keeps_first_answer_until_grid_disappears(self) -> None:
+    def test_dot_solver_emits_next_round_without_grid_disappearing(self) -> None:
         solver = DotMemorySolver(repeats_needed=2)
         first = {(0, 0), (0, 5), (1, 1), (2, 2), (3, 3), (4, 4)}
         second = {(0, 0), (0, 5), (1, 4), (2, 3), (3, 2), (4, 1)}
@@ -83,9 +83,30 @@ class SolverTests(unittest.TestCase):
             result = solver.update(dot_frame(first))
             solver.update(dot_frame(set()))
         self.assertIsNotNone(result)
-        for _ in range(3):
-            self.assertIsNone(solver.update(dot_frame(second)))
+        result = None
+        for _ in range(2):
+            result = solver.update(dot_frame(second))
             solver.update(dot_frame(set()))
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            [(point.row, point.column) for point in result.locations],
+            [(1, 1), (1, 6), (2, 5), (3, 4), (4, 3), (5, 2)],
+        )
+
+    def test_dot_solver_does_not_reuse_previous_round_animation_count(self) -> None:
+        solver = DotMemorySolver(repeats_needed=2)
+        intermediate = {(0, 0), (0, 5), (1, 4), (2, 3), (3, 2), (4, 1)}
+        final = {(0, 4), (2, 3), (2, 5), (3, 2), (4, 0), (4, 1)}
+
+        self.assertIsNone(solver.update(dot_frame(intermediate)))
+        solver.update(dot_frame(set()))
+        self.assertIsNone(solver.update(dot_frame(final)))
+        solver.update(dot_frame(set()))
+        self.assertIsNotNone(solver.update(dot_frame(final)))
+        solver.update(dot_frame(set()))
+
+        self.assertIsNone(solver.update(dot_frame(intermediate)))
 
     def test_dot_solver_ignores_incomplete_animation(self) -> None:
         solver = DotMemorySolver(repeats_needed=2)
