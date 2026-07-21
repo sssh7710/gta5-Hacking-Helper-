@@ -139,7 +139,7 @@ class SolverTests(unittest.TestCase):
             [(2, 4), (2, 6), (3, 1), (3, 2), (4, 3), (4, 5)],
         )
 
-    def test_dot_solver_handles_four_casino_rounds_with_same_pattern(self) -> None:
+    def test_dot_solver_handles_four_kortz_center_heist_rounds_with_same_pattern(self) -> None:
         solver = DotMemorySolver(repeats_needed=2)
         pattern = {(0, 4), (2, 3), (2, 5), (3, 2), (4, 0), (4, 1)}
 
