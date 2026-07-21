@@ -31,7 +31,7 @@ class GridPoint:
     column: int
 
     def label(self) -> str:
-        return f"{self.row}행 {self.column}열"
+        return f"{self.row}번째 줄 {self.column}번"
 
 
 @dataclass
@@ -50,6 +50,15 @@ class SolveResult:
     def display_text(self) -> str:
         lines = [self.summary]
         if self.locations:
-            lines.append(" · ".join(item.label() for item in self.locations))
+            grouped: dict[int, list[int]] = {}
+            for item in sorted(self.locations, key=lambda point: (point.row, point.column)):
+                grouped.setdefault(item.row, []).append(item.column)
+            grid_rows = self.debug.get("grid_rows", max(grouped))
+            if not isinstance(grid_rows, int) or grid_rows < max(grouped):
+                grid_rows = max(grouped)
+            lines.extend(
+                f"{row}번째 줄: " + (", ".join(f"{column}번" for column in grouped.get(row, [])) or "없음")
+                for row in range(1, grid_rows + 1)
+            )
         lines.extend(self.details)
         return "\n".join(lines)

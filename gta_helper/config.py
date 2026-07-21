@@ -29,6 +29,7 @@ class AppConfig:
     overlay_opacity: float = 0.90
     voice_enabled: bool = False
     voice_rate: int = 165
+    controls_legend_enabled: bool = False
     input_profile: str = "기본 키보드"
     custom_keys: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_KEYS))
     diagnostic_dir: str = "diagnostics"

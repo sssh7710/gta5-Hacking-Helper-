@@ -33,16 +33,26 @@ def _score_template(target: np.ndarray, piece: np.ndarray) -> float:
 class DotMemorySolver:
     """점멸 패턴을 프레임 전환 단위로 모아 마지막 반복 패턴을 확정한다."""
 
-    def __init__(self, repeats_needed: int = 3) -> None:
+    def __init__(self, repeats_needed: int = 2) -> None:
         self.repeats_needed = repeats_needed
         self._previous: tuple[GridPoint, ...] | None = None
         self._counts: Counter[tuple[GridPoint, ...]] = Counter()
         self._last_result: tuple[GridPoint, ...] | None = None
+        self._grid_visible = False
+        self._missing_grid_frames = 0
+        self._inactive_grid_frames = 0
+        self.current_pattern: tuple[GridPoint, ...] = ()
+        self.current_grid_shape = (0, 0)
 
     def reset(self) -> None:
         self._previous = None
         self._counts.clear()
         self._last_result = None
+        self._grid_visible = False
+        self._missing_grid_frames = 0
+        self._inactive_grid_frames = 0
+        self.current_pattern = ()
+        self.current_grid_shape = (0, 0)
 
     @staticmethod
     def _cluster(values: list[int], tolerance: int) -> list[int]:
@@ -55,77 +65,102 @@ class DotMemorySolver:
         return [round(float(np.median(group))) for group in groups]
 
     def _detect(self, frame: np.ndarray) -> tuple[tuple[GridPoint, ...], float] | None:
+        self._grid_visible = False
+        self.current_pattern = ()
+        self.current_grid_shape = (0, 0)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        # 파랑/청록 계열 원을 찾는다. 색상은 힌트일 뿐, 밝기 비교로 활성화 여부를 판단한다.
-        mask = cv2.inRange(hsv, (75, 35, 25), (130, 255, 255))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        candidates: list[tuple[int, int, int, float]] = []
-        minimum = max(12.0, frame.shape[0] * frame.shape[1] * 0.000008)
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < minimum:
-                continue
-            (x, y), radius = cv2.minEnclosingCircle(contour)
-            if radius < 3 or radius > min(frame.shape[:2]) * 0.09:
-                continue
-            circularity = 4 * np.pi * area / max(cv2.arcLength(contour, True) ** 2, 1)
-            if circularity < 0.42:
-                continue
-            candidates.append((round(x), round(y), max(3, round(radius)), circularity))
-        # 키패드 화면은 보통 3개 이하의 원만 켜져 있다. 이 경우에도 꺼진 원의
-        # 테두리를 찾아 전체 격자를 고정해야 행/열 번호를 잃지 않는다.
+        # 실제 키패드는 6×5(카지노) 또는 5×4(코르츠) 격자다. 켜진 점만으로
+        # 행/열을 만들면 순간 색상과 UI 글자를 좌표로 오인하므로 모든 원의
+        # 테두리를 먼저 찾고, 완전한 격자일 때만 판정한다.
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        scan = gray[:round(frame.shape[0] * .86), :round(frame.shape[1] * .70)]
+        height, width = frame.shape[:2]
+        scan = gray[:round(height * .86), :round(width * .70)]
         circles = cv2.HoughCircles(cv2.medianBlur(scan, 5), cv2.HOUGH_GRADIENT, 1.2, max(34, frame.shape[0] // 15), param1=80, param2=25, minRadius=max(10, frame.shape[0] // 38), maxRadius=max(16, frame.shape[0] // 13))
-        grid: list[tuple[int, int, int]] = []
-        if circles is not None:
-            raw = [(round(x), round(y), round(radius)) for x, y, radius in circles[0] if frame.shape[1] * .07 < x < frame.shape[1] * .52 and frame.shape[0] * .18 < y < frame.shape[0] * .78 and frame.shape[0] * .035 < radius < frame.shape[0] * .060]
-            if len(raw) >= 12:
-                median_radius = int(np.median([radius for _, _, radius in raw]))
-                raw = [item for item in raw if .65 <= item[2] / max(median_radius, 1) <= 1.35]
-                xs = self._cluster([x for x, _, _ in raw], max(14, median_radius))
-                ys = self._cluster([y for _, y, _ in raw], max(14, median_radius))
-                occupied = sum(any(abs(x - grid_x) <= median_radius and abs(y - grid_y) <= median_radius for x, y, _ in raw) for grid_y in ys for grid_x in xs)
-                if 3 <= len(xs) <= 8 and 3 <= len(ys) <= 6 and occupied >= len(xs) * len(ys) * .75:
-                    grid = [(x, y, median_radius) for y in ys for x in xs]
-        used_circle_grid = bool(grid)
-        if grid:
-            candidates = [(x, y, radius, 1.0) for x, y, radius in grid]
-        if len(candidates) < 4:
+        if circles is None:
             return None
-        radius = int(np.median([item[2] for item in candidates]))
-        xs = self._cluster([item[0] for item in candidates], max(8, radius * 2))
-        ys = self._cluster([item[1] for item in candidates], max(8, radius * 2))
-        if len(xs) < 2 or len(ys) < 2:
+
+        raw = [
+            (round(x), round(y), round(radius))
+            for x, y, radius in circles[0]
+            if width * .20 < x < width * .65
+            and height * .18 < y < height * .82
+            and height * .025 < radius < height * .065
+        ]
+        if len(raw) < 20:
             return None
+
+        median_radius = int(np.median([radius for _, _, radius in raw]))
+        raw = [item for item in raw if .65 <= item[2] / max(median_radius, 1) <= 1.35]
+        xs = self._cluster([x for x, _, _ in raw], max(14, median_radius))
+        ys = self._cluster([y for _, y, _ in raw], max(14, median_radius))
+        if (len(xs), len(ys)) not in {(6, 5), (5, 4)}:
+            return None
+
+        occupied = sum(
+            any(abs(x - grid_x) <= median_radius and abs(y - grid_y) <= median_radius for x, y, _ in raw)
+            for grid_y in ys
+            for grid_x in xs
+        )
+        if occupied < len(xs) * len(ys) * .90:
+            return None
+        x_steps, y_steps = np.diff(xs), np.diff(ys)
+        if min(x_steps, default=1) <= 0 or min(y_steps, default=1) <= 0:
+            return None
+        if max(x_steps, default=1) / min(x_steps, default=1) > 1.35 or max(y_steps, default=1) / min(y_steps, default=1) > 1.35:
+            return None
+        self._grid_visible = True
+        self.current_grid_shape = (len(ys), len(xs))
+
+        # 점은 청록색으로 켜진 뒤 빨간 표시로 남을 수 있다. 두 색을 모두 읽되,
+        # 흰색 선택 테두리와 어두운 격자 무늬는 제외한다.
+        cyan = cv2.inRange(hsv, (70, 80, 70), (135, 255, 255))
+        red = cv2.bitwise_or(cv2.inRange(hsv, (0, 90, 80), (15, 255, 255)), cv2.inRange(hsv, (165, 90, 80), (179, 255, 255)))
+        signal = cv2.bitwise_or(cyan, red)
         values: list[tuple[GridPoint, float]] = []
-        value_channel = hsv[:, :, 2]
-        for x, y, _, _ in candidates:
-            row = min(range(len(ys)), key=lambda i: abs(ys[i] - y)) + 1
-            column = min(range(len(xs)), key=lambda i: abs(xs[i] - x)) + 1
-            # 색상 자체보다 중앙의 밝기가 켜진 신호와 꺼진 청록 테두리를 잘 가른다.
-            top, bottom = max(0, y - radius // 2), y + radius // 2 + 1
-            left, right = max(0, x - radius // 2), x + radius // 2 + 1
-            patch = value_channel[top:bottom, left:right]
-            value = float(np.mean(patch))
-            if used_circle_grid:
-                # 중앙 팝업의 흰색은 밝지만 청록 신호가 아니므로 제외한다.
-                cyan_coverage = float(np.mean(mask[top:bottom, left:right])) / 255.0
-                value *= cyan_coverage
-            values.append((GridPoint(row, column), value))
-        brightness = np.array([value for _, value in values])
-        threshold = float(np.median(brightness) + max(16, (brightness.max() - brightness.min()) * 0.30))
-        active = tuple(sorted((point for point, value in values if value >= threshold), key=lambda p: (p.row, p.column)))
-        if not active or len(active) == len(values):
+        sample_radius = max(6, round(median_radius * .48))
+        for row, y in enumerate(ys, start=1):
+            for column, x in enumerate(xs, start=1):
+                top, bottom = max(0, y - sample_radius), min(height, y + sample_radius + 1)
+                left, right = max(0, x - sample_radius), min(width, x + sample_radius + 1)
+                patch = signal[top:bottom, left:right]
+                yy, xx = np.ogrid[:patch.shape[0], :patch.shape[1]]
+                disk = (xx - (x - left)) ** 2 + (yy - (y - top)) ** 2 <= sample_radius ** 2
+                coverage = float(np.mean(patch[disk])) / 255.0
+                values.append((GridPoint(row, column), coverage))
+
+        coverage = np.array([value for _, value in values])
+        threshold = max(.035, float(np.median(coverage)) + .025)
+        active = tuple(point for point, value in values if value >= threshold)
+        # 카지노 6×5 패턴은 완성 시 5~6개, 코르츠 5×4 패턴은 3개가 켜진다.
+        # 한두 점만 켜진 애니메이션 중간 프레임을 정답으로 고정하지 않는다.
+        minimum_active = 5 if (len(xs), len(ys)) == (6, 5) else 3
+        if not minimum_active <= len(active) <= len(xs):
             return None
-        regularity = min(1.0, len(values) / max(4, len(xs) * len(ys)))
+        self.current_pattern = active
+        regularity = min(1.0, occupied / (len(xs) * len(ys)))
         return active, regularity
 
     def update(self, frame: np.ndarray) -> SolveResult | None:
         detected = self._detect(frame)
         if detected is None:
             self._previous = None
+            if self._grid_visible:
+                self._missing_grid_frames = 0
+                if self._last_result is not None:
+                    self._inactive_grid_frames += 1
+                    if self._inactive_grid_frames >= 15:
+                        self._counts.clear()
+                        self._last_result = None
+                        self._inactive_grid_frames = 0
+            else:
+                self._inactive_grid_frames = 0
+                self._missing_grid_frames += 1
+                if self._missing_grid_frames >= 15:
+                    self.reset()
+            return None
+        self._missing_grid_frames = 0
+        self._inactive_grid_frames = 0
+        if self._last_result is not None:
             return None
         pattern, regularity = detected
         if pattern != self._previous:
@@ -141,7 +176,7 @@ class DotMemorySolver:
                 summary="점멸 원 정답 위치",
                 locations=list(pattern),
                 details=["표시된 칸만 선택하세요."],
-                debug={"repeats": count},
+                debug={"repeats": count, "grid_rows": self.current_grid_shape[0], "grid_columns": self.current_grid_shape[1]},
             )
         return None
 

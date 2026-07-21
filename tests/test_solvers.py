@@ -9,26 +9,86 @@ from gta_helper.solvers import CayoFingerprintSolver, DotMemorySolver, FragmentF
 
 
 def dot_frame(active: set[tuple[int, int]]) -> np.ndarray:
-    image = np.zeros((540, 900, 3), dtype=np.uint8)
-    for row in range(3):
-        for col in range(4):
-            color = (255, 245, 90) if (row, col) in active else (120, 65, 25)
-            cv2.circle(image, (230 + col * 120, 150 + row * 115), 22, color, -1)
+    image = np.zeros((540, 1400, 3), dtype=np.uint8)
+    for row in range(5):
+        for col in range(6):
+            center = (320 + col * 95, 130 + row * 72)
+            cv2.circle(image, center, 22, (95, 95, 95), 2)
+            if (row, col) in active:
+                cv2.circle(image, center, 13, (255, 245, 90), -1)
     return image
 
 
 class SolverTests(unittest.TestCase):
+    def test_dot_solver_accepts_second_matching_complete_pattern_by_default(self) -> None:
+        solver = DotMemorySolver()
+        pattern = {(0, 0), (0, 2), (0, 3), (0, 4), (2, 5), (3, 1)}
+        self.assertIsNone(solver.update(dot_frame(pattern)))
+        solver.update(dot_frame(set()))
+        result = solver.update(dot_frame(pattern))
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            [(point.row, point.column) for point in result.locations],
+            [(1, 1), (1, 3), (1, 4), (1, 5), (3, 6), (4, 2)],
+        )
+        display = result.display_text()
+        self.assertIn("1번째 줄: 1번, 3번, 4번, 5번", display)
+        self.assertIn("2번째 줄: 없음", display)
+        self.assertIn("4번째 줄: 2번", display)
+        self.assertIn("5번째 줄: 없음", display)
+        self.assertNotIn("위에서", display)
+        self.assertEqual(display.count("1번째 줄"), 1)
+
     def test_dot_solver_confirms_repeated_pattern(self) -> None:
         solver = DotMemorySolver(repeats_needed=3)
-        pattern = {(0, 1), (1, 3), (2, 0)}
+        pattern = {(0, 1), (1, 3), (2, 4), (3, 2), (4, 0)}
         result = None
         for _ in range(3):
             result = solver.update(dot_frame(pattern))
             solver.update(dot_frame(set()))
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual([(point.row, point.column) for point in result.locations], [(1, 2), (2, 4), (3, 1)])
+        self.assertEqual([(point.row, point.column) for point in result.locations], [(1, 2), (2, 4), (3, 5), (4, 3), (5, 1)])
         self.assertGreaterEqual(result.confidence, 0.68)
+
+    def test_dot_solver_keeps_first_answer_until_grid_disappears(self) -> None:
+        solver = DotMemorySolver(repeats_needed=2)
+        first = {(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)}
+        second = {(0, 5), (1, 4), (2, 3), (3, 2), (4, 1)}
+        result = None
+        for _ in range(2):
+            result = solver.update(dot_frame(first))
+            solver.update(dot_frame(set()))
+        self.assertIsNotNone(result)
+        for _ in range(3):
+            self.assertIsNone(solver.update(dot_frame(second)))
+            solver.update(dot_frame(set()))
+
+    def test_dot_solver_ignores_incomplete_animation(self) -> None:
+        solver = DotMemorySolver(repeats_needed=2)
+        for _ in range(4):
+            self.assertIsNone(solver.update(dot_frame({(0, 0)})))
+            solver.update(dot_frame(set()))
+
+    def test_dot_solver_rearms_after_answer_disappears(self) -> None:
+        solver = DotMemorySolver(repeats_needed=2)
+        first = {(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)}
+        second = {(0, 5), (1, 4), (2, 3), (3, 2), (4, 1)}
+        result = None
+        for _ in range(2):
+            result = solver.update(dot_frame(first))
+            solver.update(dot_frame(set()))
+        self.assertIsNotNone(result)
+        for _ in range(15):
+            solver.update(dot_frame(set()))
+        result = None
+        for _ in range(2):
+            result = solver.update(dot_frame(second))
+            solver.update(dot_frame(set()))
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual([(point.row, point.column) for point in result.locations], [(1, 6), (2, 5), (3, 4), (4, 3), (5, 2)])
 
     def test_fragment_solver_selects_four_matching_pieces(self) -> None:
         target = np.zeros((240, 240, 3), dtype=np.uint8)

@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 
 from .models import SolveResult
-from .layout import casino_fingerprint_layout, cayo_layout, fragment_layout
-from .solvers import CayoFingerprintSolver, DotMemorySolver, FragmentFingerprintSolver
+from .layout import casino_fingerprint_layout, cayo_layout
+from .solvers import CayoFingerprintSolver, DotMemorySolver
 from .casino_reference import CasinoReferenceSolver
 
 
@@ -16,7 +16,6 @@ class PuzzleAnalyzer:
 
     def __init__(self) -> None:
         self.dot = DotMemorySolver()
-        self.fragment = FragmentFingerprintSolver()
         self.casino_reference = CasinoReferenceSolver(Path(__file__).resolve().parents[1] / "assets" / "reference" / "casino_templates.json")
         self.cayo = CayoFingerprintSolver()
         self._seen: Counter[tuple] = Counter()
@@ -31,10 +30,10 @@ class PuzzleAnalyzer:
         self._frame_number += 1
         result = self.dot.update(frame)
         if result is None and self._frame_number % 4 == 0:
-            fragments = casino_fingerprint_layout(frame) or fragment_layout(frame)
+            fragments = casino_fingerprint_layout(frame)
             if fragments is not None:
                 target, candidates = fragments
-                result = self.casino_reference.solve(target, candidates) or self.fragment.solve_regions(target, candidates)
+                result = self.casino_reference.solve(target, candidates)
             if result is None:
                 cayo = cayo_layout(frame)
                 if cayo is not None:

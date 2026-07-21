@@ -12,10 +12,13 @@ class ConfigTests(unittest.TestCase):
         try:
             config = AppConfig.load(path)
             self.assertTrue(path.exists())
+            self.assertFalse(config.controls_legend_enabled)
             config.custom_keys["select"] = "Space"
+            config.controls_legend_enabled = True
             config.save(path)
             loaded = AppConfig.load(path)
             self.assertEqual(loaded.custom_keys["select"], "Space")
+            self.assertTrue(loaded.controls_legend_enabled)
             self.assertIn("up", loaded.custom_keys)
         finally:
             if path.exists():

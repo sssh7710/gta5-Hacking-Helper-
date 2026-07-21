@@ -6,4 +6,4 @@ if not exist .venv\Scripts\python.exe (
   pause
   exit /b 1
 )
-.venv\Scripts\python.exe -B app.py
+.venv\Scripts\pythonw.exe -B app.py
