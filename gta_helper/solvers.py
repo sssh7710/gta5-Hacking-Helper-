@@ -71,6 +71,7 @@ class DotMemorySolver:
         self._red_input_visible = False
         self._missing_grid_frames = 0
         self._inactive_grid_frames = 0
+        self._different_pattern_seen = False
         self.current_pattern: tuple[GridPoint, ...] = ()
         self.current_grid_shape = (0, 0)
 
@@ -82,6 +83,7 @@ class DotMemorySolver:
         self._red_input_visible = False
         self._missing_grid_frames = 0
         self._inactive_grid_frames = 0
+        self._different_pattern_seen = False
         self.current_pattern = ()
         self.current_grid_shape = (0, 0)
 
@@ -208,9 +210,11 @@ class DotMemorySolver:
             return None
         self._missing_grid_frames = 0
         self._inactive_grid_frames = 0
-        if self._last_result is not None:
-            return None
         pattern, regularity = detected
+        if self._last_result is not None and pattern != self._last_result:
+            # 실전 카지노 화면은 숫자를 입력해도 격자가 사라지거나 빨간 점으로 바뀌지 않는다.
+            # 이전 정답과 다른 완성 배열이 보이면 다음 판이 시작된 것으로 간주한다.
+            self._different_pattern_seen = True
         # 움직이는 중간 배열은 여러 프레임 유지될 수 있다. 같은 프레임을
         # 반복해서 센 것이 아니라, 다른 배열/암전 뒤 다시 나타난 배열만
         # 반복 표시로 인정해 마지막 패턴을 확정한다.
@@ -218,8 +222,12 @@ class DotMemorySolver:
             self._counts[pattern] += 1
             self._previous = pattern
         count = self._counts[pattern]
-        if count >= self.repeats_needed and pattern != self._last_result:
+        can_emit = pattern != self._last_result or self._different_pattern_seen
+        if count >= self.repeats_needed and can_emit:
             self._last_result = pattern
+            # 다음 판의 중간 배열이 이전 판에서 얻은 횟수를 재사용하지 않게 판별 이력을 분리한다.
+            self._counts.clear()
+            self._different_pattern_seen = False
             confidence = min(0.98, 0.58 + 0.10 * count + 0.12 * regularity)
             return SolveResult(
                 puzzle=PuzzleType.DOT_MEMORY,
