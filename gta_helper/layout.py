@@ -82,7 +82,14 @@ def casino_fingerprint_layout(frame: np.ndarray) -> tuple[np.ndarray, list[np.nd
     ]
     if not inner:
         return None
-    target = max(inner, key=lambda box: box.area)
+    # 지문 선이 굵은 고해상도 화면에서는 내부 윤곽 하나가 큰 상자로 잡혀
+    # 지문의 중앙 일부만 잘리는 경우가 있다. 외곽 패널은 안정적으로 잡히므로
+    # 실제 CLONE TARGET 영역을 패널 상대 좌표로 자른다.
+    target_x = round(target_panel.x + target_panel.w * .15)
+    target_y = round(target_panel.y + target_panel.h * .09)
+    target_w = round(target_panel.w * .52)
+    target_h = round(target_panel.h * .80)
+    target = frame[target_y:target_y + target_h, target_x:target_x + target_w].copy()
     component_panels = [
         box for box in boxes
         if box.x + box.w < target_panel.x and box.area > area * .07 and .40 <= box.w / max(box.h, 1) <= 1.0
@@ -104,7 +111,9 @@ def casino_fingerprint_layout(frame: np.ndarray) -> tuple[np.ndarray, list[np.nd
             candidates.append(frame[y:y + h, x:x + w].copy())
     if any(min(candidate.shape[:2]) < 12 for candidate in candidates):
         return None
-    return target.crop(frame), candidates
+    if min(target.shape[:2]) < 24:
+        return None
+    return target, candidates
 
 
 def cayo_layout(frame: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]] | None:

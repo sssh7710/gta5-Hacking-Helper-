@@ -35,6 +35,8 @@ class CasinoLayoutTests(unittest.TestCase):
                 self.assertEqual(len(candidates), 8)
                 self.assertGreater(target.shape[0], candidates[0].shape[0])
                 self.assertGreater(target.shape[1], candidates[0].shape[1])
+                self.assertGreater(target.shape[0], height * .50)
+                self.assertGreater(target.shape[1], width * .18)
 
     def test_selected_component_indices_reads_bright_tiles_only(self) -> None:
         candidates = [np.full((20, 20, 3), 10, dtype=np.uint8) for _ in range(8)]
