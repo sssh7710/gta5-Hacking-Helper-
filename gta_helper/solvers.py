@@ -177,6 +177,9 @@ class DotMemorySolver:
         expected_active = 6 if (len(xs), len(ys)) == (6, 5) else 3
         if len(active) != expected_active:
             return None
+        if (len(xs), len(ys)) == (6, 5) and {point.column for point in active} != set(range(1, 7)):
+            # 카지노는 01~06 신호마다 세로 위치가 하나씩 있어야 완성 패턴이다.
+            return None
         self.current_pattern = active
         regularity = min(1.0, occupied / (len(xs) * len(ys)))
         return active, regularity
@@ -208,10 +211,12 @@ class DotMemorySolver:
         if self._last_result is not None:
             return None
         pattern, regularity = detected
-        # 점멸 사이의 매우 짧은 암전 프레임을 캡처가 놓쳐도 같은 완성 패턴을
-        # 연속 두 프레임 확인하면 반복 표시로 인정한다.
-        self._counts[pattern] += 1
-        self._previous = pattern
+        # 움직이는 중간 배열은 여러 프레임 유지될 수 있다. 같은 프레임을
+        # 반복해서 센 것이 아니라, 다른 배열/암전 뒤 다시 나타난 배열만
+        # 반복 표시로 인정해 마지막 패턴을 확정한다.
+        if pattern != self._previous:
+            self._counts[pattern] += 1
+            self._previous = pattern
         count = self._counts[pattern]
         if count >= self.repeats_needed and pattern != self._last_result:
             self._last_result = pattern
@@ -221,7 +226,7 @@ class DotMemorySolver:
                 confidence=confidence,
                 summary="점멸 원 정답 위치",
                 locations=list(pattern),
-                details=["표시된 칸만 선택하세요."],
+                details=["1번 신호부터 순서대로 표시된 세로 칸을 선택하세요."],
                 debug={"repeats": count, "grid_rows": self.current_grid_shape[0], "grid_columns": self.current_grid_shape[1]},
             )
         return None

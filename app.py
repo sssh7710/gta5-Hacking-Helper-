@@ -112,7 +112,10 @@ class Scanner(threading.Thread):
                     except CaptureError as exc:
                         self.events.put(("status", str(exc)))
                     last_observed_pattern = observed_pattern
-                if result is not None and result.signature != last_signature:
+                # 점멸 해킹 결과는 솔버가 판마다 한 번만 반환한다. 다음 판의
+                # 배열이 우연히 같아도 다시 안내해야 하므로 전역 서명 중복
+                # 차단을 적용하지 않는다.
+                if result is not None and (result.puzzle == PuzzleType.DOT_MEMORY or result.signature != last_signature):
                     last_signature = result.signature
                     if result.puzzle == PuzzleType.DOT_MEMORY:
                         coordinates = "_".join(f"r{point.row}c{point.column}" for point in result.locations)

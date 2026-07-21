@@ -50,15 +50,23 @@ class SolveResult:
     def display_text(self) -> str:
         lines = [self.summary]
         if self.locations:
-            grouped: dict[int, list[int]] = {}
-            for item in sorted(self.locations, key=lambda point: (point.row, point.column)):
-                grouped.setdefault(item.row, []).append(item.column)
-            grid_rows = self.debug.get("grid_rows", max(grouped))
-            if not isinstance(grid_rows, int) or grid_rows < max(grouped):
-                grid_rows = max(grouped)
-            lines.extend(
-                f"{row}번째 줄: " + (", ".join(f"{column}번" for column in grouped.get(row, [])) or "없음")
-                for row in range(1, grid_rows + 1)
-            )
+            grid_rows = self.debug.get("grid_rows")
+            grid_columns = self.debug.get("grid_columns")
+            if self.puzzle == PuzzleType.DOT_MEMORY and (grid_rows, grid_columns) == (5, 6):
+                row_by_signal = {item.column: item.row for item in self.locations}
+                lines.extend(
+                    f"{signal}번 신호: {row_by_signal[signal]}번째 칸"
+                    for signal in range(1, 7)
+                )
+            else:
+                grouped: dict[int, list[int]] = {}
+                for item in sorted(self.locations, key=lambda point: (point.row, point.column)):
+                    grouped.setdefault(item.row, []).append(item.column)
+                if not isinstance(grid_rows, int) or grid_rows < max(grouped):
+                    grid_rows = max(grouped)
+                lines.extend(
+                    f"{row}번째 줄: " + (", ".join(f"{column}번" for column in grouped.get(row, [])) or "없음")
+                    for row in range(1, grid_rows + 1)
+                )
         lines.extend(self.details)
         return "\n".join(lines)
