@@ -103,7 +103,7 @@ class DotMemorySolver:
         self.current_pattern = ()
         self.current_grid_shape = (0, 0)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        # 실제 키패드는 6×5(카지노) 또는 5×4(코르츠) 격자다. 켜진 점만으로
+        # 점멸 키패드는 6×5 또는 5×4 격자다. 켜진 점만으로
         # 행/열을 만들면 순간 색상과 UI 글자를 좌표로 오인하므로 모든 원의
         # 테두리를 먼저 찾고, 완전한 격자일 때만 판정한다.
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -174,13 +174,13 @@ class DotMemorySolver:
         coverage = np.array([cyan_value for _, cyan_value, _ in values])
         threshold = max(.035, float(np.median(coverage)) + .025)
         active = tuple(point for point, cyan_value, _ in values if cyan_value >= threshold)
-        # 카지노 6×5 패턴은 완성 시 6개, 코르츠 5×4 패턴은 3개가 켜진다.
+        # 6×5 패턴은 완성 시 6개, 5×4 패턴은 3개가 켜진다.
         # 완성 전 중간 프레임을 정답으로 고정하지 않는다.
         expected_active = 6 if (len(xs), len(ys)) == (6, 5) else 3
         if len(active) != expected_active:
             return None
         if (len(xs), len(ys)) == (6, 5) and {point.column for point in active} != set(range(1, 7)):
-            # 카지노는 01~06 신호마다 세로 위치가 하나씩 있어야 완성 패턴이다.
+            # 6×5 화면은 01~06 신호마다 세로 위치가 하나씩 있어야 완성 패턴이다.
             return None
         self.current_pattern = active
         regularity = min(1.0, occupied / (len(xs) * len(ys)))
@@ -212,7 +212,7 @@ class DotMemorySolver:
         self._inactive_grid_frames = 0
         pattern, regularity = detected
         if self._last_result is not None and pattern != self._last_result:
-            # 실전 카지노 화면은 숫자를 입력해도 격자가 사라지거나 빨간 점으로 바뀌지 않는다.
+            # 실전 코르츠 센터 습격 화면은 숫자를 입력해도 격자가 사라지거나 빨간 점으로 바뀌지 않는다.
             # 이전 정답과 다른 완성 배열이 보이면 다음 판이 시작된 것으로 간주한다.
             self._different_pattern_seen = True
         # 움직이는 중간 배열은 여러 프레임 유지될 수 있다. 같은 프레임을
