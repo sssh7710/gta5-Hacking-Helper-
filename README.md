@@ -1,4 +1,4 @@
-# GTA V Enhanced 해킹 안내 도우미
+# GTA V Enhanced 해킹 안내 도우미 (개발중)
 
 GTA Online 해킹 화면을 **외부 화면 캡처만으로 분석**해 정답 위치를 알려주는 Windows용 도구입니다. 게임에 키·마우스 입력을 보내지 않고, 게임 메모리·프로세스·DLL·DirectX를 건드리지 않습니다.
 
