@@ -33,6 +33,10 @@ class AppConfig:
     input_profile: str = "기본 키보드"
     custom_keys: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_KEYS))
     diagnostic_dir: str = "diagnostics"
+    diagnostic_capture_enabled: bool = True
+    diagnostic_capture_seconds: float = 7.0
+    diagnostic_capture_fps: int = 8
+    diagnostic_capture_max_mb: int = 1024
     game_title_patterns: list[str] = field(default_factory=lambda: ["grand theft auto", "gta v"])
 
     @classmethod
