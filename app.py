@@ -37,7 +37,7 @@ from tkinter import messagebox, ttk
 import numpy as np
 
 from gta_helper.analyzer import PuzzleAnalyzer
-from gta_helper.capture import CaptureError, DxCapture
+from gta_helper.capture import CaptureError, DiagnosticFrameRecorder, DxCapture
 from gta_helper.config import AppConfig
 from gta_helper.models import AppState, DisplayMode, PuzzleType, SolveResult
 from gta_helper.speech import SpeechService
@@ -73,6 +73,12 @@ class Scanner(threading.Thread):
 
     def run(self) -> None:
         analyzer = PuzzleAnalyzer()
+        recorder = DiagnosticFrameRecorder(
+            self.config.diagnostic_dir,
+            duration_seconds=self.config.diagnostic_capture_seconds,
+            fps=self.config.diagnostic_capture_fps,
+            max_total_bytes=self.config.diagnostic_capture_max_mb * 1024 * 1024,
+        )
         last_signature: tuple | None = None
         try:
             self._capture = DxCapture(self.config)
@@ -98,6 +104,12 @@ class Scanner(threading.Thread):
                     time.sleep(1.0)
                     continue
                 self.latest_frame = frame
+                try:
+                    completed_session = recorder.add(frame)
+                    if completed_session is not None:
+                        self.events.put(("status", f"인식 개선 사진 저장: {completed_session.name}"))
+                except CaptureError as exc:
+                    self.events.put(("status", str(exc)))
                 if self.diagnostic_event.is_set():
                     path = self._capture.save_diagnostic(frame, self.config.diagnostic_dir, "gta")
                     self.events.put(("status", f"진단 이미지 저장: {path.name}"))
@@ -106,30 +118,57 @@ class Scanner(threading.Thread):
                 result = analyzer.update(frame)
                 observed_pattern = analyzer.dot.current_pattern
                 if observed_pattern and observed_pattern != last_observed_pattern:
-                    coordinates = "_".join(f"r{point.row}c{point.column}" for point in observed_pattern)
-                    try:
-                        self._capture.save_diagnostic(frame, self.config.diagnostic_dir, f"observed_{coordinates}")
-                    except CaptureError as exc:
-                        self.events.put(("status", str(exc)))
+                    if self.config.diagnostic_capture_enabled and not recorder.active:
+                        rows, columns = analyzer.dot.current_grid_shape
+                        try:
+                            session_dir = recorder.start(
+                                frame,
+                                f"keypad_{columns}x{rows}",
+                                {
+                                    "puzzle": PuzzleType.DOT_MEMORY.name,
+                                    "grid_rows": rows,
+                                    "grid_columns": columns,
+                                    "trigger_pattern": [
+                                        {"row": point.row, "column": point.column}
+                                        for point in observed_pattern
+                                    ],
+                                    "capture_backend": self._capture.backend,
+                                },
+                            )
+                            self.events.put(("status", f"인식 개선 사진 수집 시작: {session_dir.name}"))
+                        except CaptureError as exc:
+                            self.events.put(("status", str(exc)))
                     last_observed_pattern = observed_pattern
                 # 점멸 해킹 결과는 솔버가 판마다 한 번만 반환한다. 다음 판의
                 # 배열이 우연히 같아도 다시 안내해야 하므로 전역 서명 중복
                 # 차단을 적용하지 않는다.
                 if result is not None and (result.puzzle == PuzzleType.DOT_MEMORY or result.signature != last_signature):
                     last_signature = result.signature
-                    if result.puzzle == PuzzleType.DOT_MEMORY:
-                        coordinates = "_".join(f"r{point.row}c{point.column}" for point in result.locations)
+                    if self.config.diagnostic_capture_enabled and not recorder.active:
                         try:
-                            path = self._capture.save_diagnostic(frame, self.config.diagnostic_dir, f"detected_{coordinates}")
-                            result.debug["diagnostic_path"] = str(path)
-                            self.events.put(("status", f"키패드 판정 화면 저장: {path.name}"))
+                            session_dir = recorder.start(
+                                frame,
+                                result.puzzle.name.lower(),
+                                {"puzzle": result.puzzle.name, "capture_backend": self._capture.backend},
+                            )
+                            self.events.put(("status", f"인식 개선 사진 수집 시작: {session_dir.name}"))
                         except CaptureError as exc:
                             self.events.put(("status", str(exc)))
+                    recorder.annotate(
+                        result_summary=result.summary,
+                        result_confidence=result.confidence,
+                        result_locations=[
+                            {"row": point.row, "column": point.column}
+                            for point in result.locations
+                        ],
+                        result_debug=result.debug,
+                    )
                     self.events.put(("result", result))
                 time.sleep(max(0.02, 1 / max(1, self.config.target_fps)))
         except Exception as exc:
             self.events.put(("state", (AppState.ERROR, f"스캐너 오류: {exc}")))
         finally:
+            recorder.close()
             if self._capture:
                 self._capture.close()
 
@@ -243,17 +282,22 @@ class HelperApp:
         ttk.Checkbutton(body, text="음성 안내 사용", variable=voice_var).grid(row=1, column=0, columnspan=2, sticky="w", pady=4)
         controls_legend_var = tk.BooleanVar(value=self.config.controls_legend_enabled)
         ttk.Checkbutton(body, text="조작 범례 표시", variable=controls_legend_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Label(body, text="캡처 백엔드").grid(row=3, column=0, sticky="w", pady=4)
+        diagnostic_capture_var = tk.BooleanVar(value=self.config.diagnostic_capture_enabled)
+        ttk.Checkbutton(body, text="인식 개선 사진 자동 저장 (약 7초)", variable=diagnostic_capture_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Label(body, text="인식 자료 최대 용량 (MB)").grid(row=4, column=0, sticky="w", pady=4)
+        diagnostic_max_var = tk.IntVar(value=self.config.diagnostic_capture_max_mb)
+        ttk.Spinbox(body, from_=100, to=10240, increment=100, textvariable=diagnostic_max_var, width=20).grid(row=4, column=1, padx=8)
+        ttk.Label(body, text="캡처 백엔드").grid(row=5, column=0, sticky="w", pady=4)
         backend = ttk.Combobox(body, state="readonly", width=22, values=["auto", "dxgi", "winrt"])
         backend.set(self.config.capture_backend)
-        backend.grid(row=3, column=1, padx=8)
-        ttk.Label(body, text="입력 프로필").grid(row=4, column=0, sticky="w", pady=4)
+        backend.grid(row=5, column=1, padx=8)
+        ttk.Label(body, text="입력 프로필").grid(row=6, column=0, sticky="w", pady=4)
         profile = ttk.Combobox(body, state="readonly", width=22, values=list(INPUT_PROFILES))
         profile.set(self.config.input_profile)
-        profile.grid(row=4, column=1, padx=8)
-        ttk.Label(body, text="사용자 키 (위/아래/왼쪽/오른쪽/선택/뒤로)").grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 2))
+        profile.grid(row=6, column=1, padx=8)
+        ttk.Label(body, text="사용자 키 (위/아래/왼쪽/오른쪽/선택/뒤로)").grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 2))
         key_vars: dict[str, tk.StringVar] = {}
-        for row, key in enumerate(("up", "down", "left", "right", "select", "back"), start=6):
+        for row, key in enumerate(("up", "down", "left", "right", "select", "back"), start=8):
             ttk.Label(body, text=key).grid(row=row, column=0, sticky="w", pady=1)
             value = tk.StringVar(value=self.config.custom_keys[key])
             key_vars[key] = value
@@ -262,6 +306,11 @@ class HelperApp:
         def save() -> None:
             self.config.voice_enabled = voice_var.get()
             self.config.controls_legend_enabled = controls_legend_var.get()
+            self.config.diagnostic_capture_enabled = diagnostic_capture_var.get()
+            try:
+                self.config.diagnostic_capture_max_mb = max(100, min(10240, int(diagnostic_max_var.get())))
+            except (tk.TclError, ValueError):
+                self.config.diagnostic_capture_max_mb = 1024
             self.config.capture_backend = backend.get()
             self.config.input_profile = profile.get()
             self.config.custom_keys = {key: value.get().strip() or self.config.custom_keys[key] for key, value in key_vars.items()}
@@ -271,7 +320,7 @@ class HelperApp:
             dialog.destroy()
             messagebox.showinfo("설정 저장", "설정을 저장했습니다. 캡처/음성 변경은 다음 실행부터 적용됩니다.")
 
-        ttk.Button(body, text="저장", command=save).grid(row=12, column=1, sticky="e", pady=(10, 0))
+        ttk.Button(body, text="저장", command=save).grid(row=14, column=1, sticky="e", pady=(10, 0))
 
     def _drain_events(self) -> None:
         content_changed = False

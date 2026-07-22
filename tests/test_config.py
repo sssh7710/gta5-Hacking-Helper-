@@ -13,12 +13,18 @@ class ConfigTests(unittest.TestCase):
             config = AppConfig.load(path)
             self.assertTrue(path.exists())
             self.assertFalse(config.controls_legend_enabled)
+            self.assertTrue(config.diagnostic_capture_enabled)
+            self.assertEqual(config.diagnostic_capture_max_mb, 1024)
             config.custom_keys["select"] = "Space"
             config.controls_legend_enabled = True
+            config.diagnostic_capture_enabled = False
+            config.diagnostic_capture_max_mb = 500
             config.save(path)
             loaded = AppConfig.load(path)
             self.assertEqual(loaded.custom_keys["select"], "Space")
             self.assertTrue(loaded.controls_legend_enabled)
+            self.assertFalse(loaded.diagnostic_capture_enabled)
+            self.assertEqual(loaded.diagnostic_capture_max_mb, 500)
             self.assertIn("up", loaded.custom_keys)
         finally:
             if path.exists():

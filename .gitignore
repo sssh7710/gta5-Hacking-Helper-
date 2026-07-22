@@ -1,7 +1,13 @@
 .venv/
+.vscode/
 .codex-remote-attachments/
 __pycache__/
 *.py[cod]
+*.log
+*.tmp
+*.bak
+Thumbs.db
+Desktop.ini
 config.json
 diagnostics/*
 !diagnostics/.gitkeep
