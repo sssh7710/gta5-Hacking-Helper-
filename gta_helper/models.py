@@ -52,11 +52,12 @@ class SolveResult:
         if self.locations:
             grid_rows = self.debug.get("grid_rows")
             grid_columns = self.debug.get("grid_columns")
-            if self.puzzle == PuzzleType.DOT_MEMORY and (grid_rows, grid_columns) == (5, 6):
-                row_by_signal = {item.column: item.row for item in self.locations}
+            row_by_signal = {item.column: item.row for item in self.locations}
+            signal_numbers = set(range(1, grid_columns + 1)) if isinstance(grid_columns, int) else set()
+            if self.puzzle == PuzzleType.DOT_MEMORY and set(row_by_signal) == signal_numbers:
                 lines.extend(
                     f"{signal}번 신호: {row_by_signal[signal]}번째 칸"
-                    for signal in range(1, 7)
+                    for signal in range(1, grid_columns + 1)
                 )
             else:
                 grouped: dict[int, list[int]] = {}

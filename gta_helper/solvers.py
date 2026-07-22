@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from itertools import permutations
+from itertools import combinations, permutations
 from typing import Iterable
 
 import cv2
@@ -97,6 +97,33 @@ class DotMemorySolver:
                 groups[-1].append(value)
         return [round(float(np.median(group))) for group in groups]
 
+    @staticmethod
+    def _regular_axis(values: list[int], tolerance: int, size: int) -> list[int]:
+        groups: list[list[int]] = []
+        for value in sorted(values):
+            if not groups or value - groups[-1][-1] > tolerance:
+                groups.append([value])
+            else:
+                groups[-1].append(value)
+        if len(groups) < size:
+            return []
+
+        centers = [round(float(np.median(group))) for group in groups]
+        best: tuple[tuple[int, float], list[int]] | None = None
+        for indices in combinations(range(len(groups)), size):
+            selected = [centers[index] for index in indices]
+            steps = np.diff(selected)
+            if min(steps, default=0) <= 0:
+                continue
+            step_ratio = float(max(steps) / min(steps))
+            if step_ratio > 1.35:
+                continue
+            support = sum(len(groups[index]) for index in indices)
+            score = (support, -step_ratio)
+            if best is None or score > best[0]:
+                best = (score, selected)
+        return [] if best is None else best[1]
+
     def _detect(self, frame: np.ndarray) -> tuple[tuple[GridPoint, ...], float] | None:
         self._grid_visible = False
         self._red_input_visible = False
@@ -125,23 +152,24 @@ class DotMemorySolver:
 
         median_radius = int(np.median([radius for _, _, radius in raw]))
         raw = [item for item in raw if .65 <= item[2] / max(median_radius, 1) <= 1.35]
-        xs = self._cluster([x for x, _, _ in raw], max(14, median_radius))
-        ys = self._cluster([y for _, y, _ in raw], max(14, median_radius))
-        if (len(xs), len(ys)) not in {(6, 5), (5, 4)}:
+        axis_tolerance = max(8, round(median_radius * .45))
+        grids: list[tuple[float, list[int], list[int]]] = []
+        for column_count, row_count in ((6, 5), (5, 4)):
+            candidate_xs = self._regular_axis([x for x, _, _ in raw], axis_tolerance, column_count)
+            candidate_ys = self._regular_axis([y for _, y, _ in raw], axis_tolerance, row_count)
+            if not candidate_xs or not candidate_ys:
+                continue
+            occupied = sum(
+                any(abs(x - grid_x) <= median_radius and abs(y - grid_y) <= median_radius for x, y, _ in raw)
+                for grid_y in candidate_ys
+                for grid_x in candidate_xs
+            )
+            occupancy = occupied / (column_count * row_count)
+            if occupancy >= .90:
+                grids.append((occupancy, candidate_xs, candidate_ys))
+        if not grids:
             return None
-
-        occupied = sum(
-            any(abs(x - grid_x) <= median_radius and abs(y - grid_y) <= median_radius for x, y, _ in raw)
-            for grid_y in ys
-            for grid_x in xs
-        )
-        if occupied < len(xs) * len(ys) * .90:
-            return None
-        x_steps, y_steps = np.diff(xs), np.diff(ys)
-        if min(x_steps, default=1) <= 0 or min(y_steps, default=1) <= 0:
-            return None
-        if max(x_steps, default=1) / min(x_steps, default=1) > 1.35 or max(y_steps, default=1) / min(y_steps, default=1) > 1.35:
-            return None
+        regularity, xs, ys = max(grids, key=lambda item: (item[0], len(item[1]) * len(item[2])))
         self._grid_visible = True
         self.current_grid_shape = (len(ys), len(xs))
 
@@ -174,16 +202,15 @@ class DotMemorySolver:
         coverage = np.array([cyan_value for _, cyan_value, _ in values])
         threshold = max(.035, float(np.median(coverage)) + .025)
         active = tuple(point for point, cyan_value, _ in values if cyan_value >= threshold)
-        # 6×5 패턴은 완성 시 6개, 5×4 패턴은 3개가 켜진다.
+        # 어려움 6×5 패턴은 완성 시 6개, 보통 5×4 패턴은 5개가 켜진다.
+        # 두 화면 모두 신호 열마다 세로 위치가 하나씩 있어야 완성 패턴이다.
         # 완성 전 중간 프레임을 정답으로 고정하지 않는다.
-        expected_active = 6 if (len(xs), len(ys)) == (6, 5) else 3
+        expected_active = len(xs)
         if len(active) != expected_active:
             return None
-        if (len(xs), len(ys)) == (6, 5) and {point.column for point in active} != set(range(1, 7)):
-            # 6×5 화면은 01~06 신호마다 세로 위치가 하나씩 있어야 완성 패턴이다.
+        if {point.column for point in active} != set(range(1, len(xs) + 1)):
             return None
         self.current_pattern = active
-        regularity = min(1.0, occupied / (len(xs) * len(ys)))
         return active, regularity
 
     def update(self, frame: np.ndarray) -> SolveResult | None:

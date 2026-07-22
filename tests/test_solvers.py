@@ -22,8 +22,23 @@ def dot_frame(active: set[tuple[int, int]], red_active: set[tuple[int, int]] | N
     return image
 
 
+def kortz_frame(active: set[tuple[int, int]]) -> np.ndarray:
+    image = np.zeros((540, 1400, 3), dtype=np.uint8)
+    for row in range(4):
+        for col in range(5):
+            center = (320 + col * 95, 130 + row * 72)
+            cv2.circle(image, center, 22, (95, 95, 95), 2)
+            if (row, col) in active:
+                cv2.circle(image, center, 13, (255, 245, 90), -1)
+    return image
+
+
 class SolverTests(unittest.TestCase):
-    def test_dot_solver_accepts_second_matching_complete_pattern_by_default(self) -> None:
+    def test_dot_solver_selects_supported_regular_axis_over_spurious_circles(self) -> None:
+        values = [499] * 4 + [607] * 4 + [715] * 4 + [823] * 4 + [930] * 4 + [442, 550, 877]
+        self.assertEqual(DotMemorySolver._regular_axis(values, tolerance=19, size=5), [499, 607, 715, 823, 930])
+
+    def test_dot_solver_detects_kortz_center_hard_six_by_five_pattern(self) -> None:
         solver = DotMemorySolver()
         pattern = {(0, 0), (0, 2), (0, 3), (0, 4), (2, 5), (3, 1)}
         self.assertIsNone(solver.update(dot_frame(pattern)))
@@ -116,6 +131,28 @@ class SolverTests(unittest.TestCase):
         five_points = {(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)}
         self.assertIsNone(solver.update(dot_frame(five_points)))
         self.assertIsNone(solver.update(dot_frame(five_points)))
+
+    def test_dot_solver_detects_kortz_center_normal_five_by_four_pattern(self) -> None:
+        solver = DotMemorySolver(repeats_needed=2)
+        pattern = {(0, 0), (2, 1), (1, 2), (3, 3), (0, 4)}
+
+        self.assertIsNone(solver.update(kortz_frame(pattern)))
+        solver.update(kortz_frame(set()))
+        result = solver.update(kortz_frame(pattern))
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            [(point.row, point.column) for point in result.locations],
+            [(1, 1), (1, 5), (2, 3), (3, 2), (4, 4)],
+        )
+        display = result.display_text()
+        self.assertIn("1번 신호: 1번째 칸", display)
+        self.assertIn("2번 신호: 3번째 칸", display)
+        self.assertIn("3번 신호: 2번째 칸", display)
+        self.assertIn("4번 신호: 4번째 칸", display)
+        self.assertIn("5번 신호: 1번째 칸", display)
+        self.assertNotIn("번째 줄", display)
 
     def test_dot_solver_rearms_for_second_pattern_after_red_input(self) -> None:
         solver = DotMemorySolver(repeats_needed=2)
