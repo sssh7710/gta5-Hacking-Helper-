@@ -85,11 +85,23 @@ class Scanner(threading.Thread):
             self._capture.open()
             self.events.put(("status", f"캡처 준비 완료 ({self._capture.backend})"))
             last_observed_pattern = None
+            keypad_screen_seen = False
+            keypad_result_shown = False
+            keypad_missing_checks = 0
+            casino_attempt_seen = False
+            casino_rearm = False
+            casino_missing_checks = 0
             while not self.stop_event.is_set():
                 if self.reset_event.is_set():
                     analyzer.reset()
                     last_signature = None
                     last_observed_pattern = None
+                    keypad_screen_seen = False
+                    keypad_result_shown = False
+                    keypad_missing_checks = 0
+                    casino_attempt_seen = False
+                    casino_rearm = False
+                    casino_missing_checks = 0
                     self.reset_event.clear()
                     self.events.put(("reset", None))
                 game = find_game_window(self.config.game_title_patterns)
@@ -116,8 +128,58 @@ class Scanner(threading.Thread):
                     self.diagnostic_event.clear()
                 self.events.put(("state", (AppState.ANALYZING, "해킹 화면 자동 감시 중")))
                 result = analyzer.update(frame)
+                if analyzer.dot.grid_visible:
+                    keypad_missing_checks = 0
+                    if not keypad_screen_seen:
+                        keypad_screen_seen = True
+                        keypad_result_shown = False
+                        self.events.put(("keypad_start", analyzer.dot.current_grid_shape))
+                else:
+                    keypad_missing_checks += 1
+                    if keypad_missing_checks >= 15:
+                        keypad_screen_seen = False
+                        keypad_result_shown = False
+                        last_observed_pattern = None
+                if analyzer.dot.input_visible and keypad_result_shown:
+                    # 같은 배열이 연속 라운드에 나와도 다음 점멸이 새 분석으로
+                    # 처리되도록 입력 단계에서 이전 관찰 배열을 해제한다.
+                    last_observed_pattern = None
+                if analyzer.casino_layout_checked:
+                    if analyzer.casino_screen_visible:
+                        casino_missing_checks = 0
+                        if analyzer.casino_selection_visible:
+                            casino_rearm = True
+                        elif (
+                            self.config.diagnostic_capture_enabled
+                            and not recorder.active
+                            and (not casino_attempt_seen or casino_rearm)
+                        ):
+                            try:
+                                session_dir = recorder.start(
+                                    frame,
+                                    "fragment_fingerprint_pending",
+                                    {
+                                        "puzzle": PuzzleType.FRAGMENT_FINGERPRINT.name,
+                                        "capture_backend": self._capture.backend,
+                                        "detection_status": "pending",
+                                    },
+                                )
+                                casino_attempt_seen = True
+                                casino_rearm = False
+                                self.events.put(("fingerprint_start", None))
+                                self.events.put(("status", f"지문 인식 진단 수집 시작: {session_dir.name}"))
+                            except CaptureError as exc:
+                                self.events.put(("status", str(exc)))
+                    else:
+                        casino_missing_checks += 1
+                        if casino_missing_checks >= 2:
+                            casino_attempt_seen = False
+                            casino_rearm = False
                 observed_pattern = analyzer.dot.current_pattern
                 if observed_pattern and observed_pattern != last_observed_pattern:
+                    if keypad_result_shown:
+                        keypad_result_shown = False
+                        self.events.put(("keypad_start", analyzer.dot.current_grid_shape))
                     if self.config.diagnostic_capture_enabled and not recorder.active:
                         rows, columns = analyzer.dot.current_grid_shape
                         try:
@@ -144,6 +206,8 @@ class Scanner(threading.Thread):
                 # 차단을 적용하지 않는다.
                 if result is not None and (result.puzzle == PuzzleType.DOT_MEMORY or result.signature != last_signature):
                     last_signature = result.signature
+                    if result.puzzle == PuzzleType.DOT_MEMORY:
+                        keypad_result_shown = True
                     if self.config.diagnostic_capture_enabled and not recorder.active:
                         try:
                             session_dir = recorder.start(
@@ -341,6 +405,19 @@ class HelperApp:
                 self.state_var.set(AppState.ANALYZING.value)
                 self.detail_var.set("인식 기록을 초기화했습니다. 점멸 패턴을 기다리는 중")
                 self.answer_var.set("GTA V 해킹 화면을 기다립니다.")
+                self.confidence_var.set("")
+                content_changed = True
+            elif kind == "fingerprint_start":
+                self.state_var.set(AppState.ANALYZING.value)
+                self.detail_var.set("새 지문 화면 감지")
+                self.answer_var.set("지문 정답을 분석 중입니다.")
+                self.confidence_var.set("")
+                content_changed = True
+            elif kind == "keypad_start":
+                rows, columns = payload  # type: ignore[misc]
+                self.state_var.set(AppState.ANALYZING.value)
+                self.detail_var.set(f"키패드 화면 감지 ({columns}열×{rows}행)")
+                self.answer_var.set("키패드 해킹 인식 중입니다.")
                 self.confidence_var.set("")
                 content_changed = True
             elif kind == "result":

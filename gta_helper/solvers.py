@@ -40,9 +40,12 @@ def _score_fingerprint_piece(target: np.ndarray, piece: np.ndarray) -> float:
     if min(target_gray.shape) < 24 or min(piece_gray.shape) < 12:
         return -1.0
 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
-    target_gray = clahe.apply(target_gray)
-    piece_gray = clahe.apply(piece_gray)
+    # 카지노 UI의 점무늬 배경은 후보마다 위치가 달라 명암 상관계수에
+    # 잘못 기여한다. 밝은 지문선만 이진화해 실제 선 모양을 비교한다.
+    target_gray = cv2.threshold(target_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    piece_gray = cv2.threshold(piece_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    if cv2.countNonZero(piece_gray) < max(12, piece_gray.size * .006):
+        return -1.0
     best = -1.0
     for scale in np.arange(.50, 1.71, .05):
         resized = cv2.resize(
@@ -86,6 +89,16 @@ class DotMemorySolver:
         self._different_pattern_seen = False
         self.current_pattern = ()
         self.current_grid_shape = (0, 0)
+
+    @property
+    def grid_visible(self) -> bool:
+        """지원하는 점멸 키패드 격자가 현재 화면에 보이는지 반환한다."""
+        return self._grid_visible
+
+    @property
+    def input_visible(self) -> bool:
+        """사용자가 정답을 입력하는 빨간 표시 단계인지 반환한다."""
+        return self._red_input_visible
 
     @staticmethod
     def _cluster(values: list[int], tolerance: int) -> list[int]:
@@ -278,15 +291,21 @@ class FragmentFingerprintSolver:
         # 4위 조각이 충분히 맞고, 5위와의 차이도 뚜렷할 때만 답을 낸다.
         fifth_score = scored[4][1] if len(scored) > 4 else -1.0
         margin = selected[-1][1] - fifth_score
-        if selected[-1][1] < 0.55 or margin < 0.08:
+        # 실제 1920x1080 연습 화면에서 확인된 가장 약한 정답 조각은
+        # 이진 선 점수 약 0.50, 5위와의 최소 차이는 약 0.05다.
+        if selected[-1][1] < 0.44 or margin < 0.04:
             return None
-        confidence = max(0.0, min(0.99, float(np.mean([score for _, score in selected]))))
+        mean_score = float(np.mean([score for _, score in selected]))
+        # 정답 4개와 나머지가 뚜렷하게 갈리는지도 신뢰도에 반영한다.
+        # 네 번째 연습 지문의 실측 평균은 0.66이지만 5위와 0.14 차이가 나므로
+        # 단순 평균만 사용하면 신뢰도 표시 기준(0.68)에서 잘못 탈락한다.
+        confidence = max(0.0, min(0.99, mean_score + margin * .25))
         return SolveResult(
             puzzle=PuzzleType.FRAGMENT_FINGERPRINT,
             confidence=confidence,
             summary="지문 조각 정답",
             details=["선택: " + " · ".join(f"{index}번" for index, _ in sorted(selected)), "정답 4개를 선택한 뒤 확인하세요."],
-            debug={"scores": scored, "margin": margin},
+            debug={"scores": scored, "margin": margin, "mean_score": mean_score},
         )
 
 

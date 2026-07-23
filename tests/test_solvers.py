@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -137,6 +138,9 @@ class SolverTests(unittest.TestCase):
         pattern = {(0, 0), (2, 1), (1, 2), (3, 3), (0, 4)}
 
         self.assertIsNone(solver.update(kortz_frame(pattern)))
+        self.assertTrue(solver.grid_visible)
+        self.assertFalse(solver.input_visible)
+        self.assertEqual(solver.current_grid_shape, (4, 5))
         solver.update(kortz_frame(set()))
         result = solver.update(kortz_frame(pattern))
 
@@ -165,6 +169,8 @@ class SolverTests(unittest.TestCase):
         self.assertIsNotNone(result)
 
         self.assertIsNone(solver.update(dot_frame(set(), {(0, 0)})))
+        self.assertTrue(solver.grid_visible)
+        self.assertTrue(solver.input_visible)
         for _ in range(2):
             result = solver.update(dot_frame(second))
             solver.update(dot_frame(set()))
@@ -226,6 +232,46 @@ class SolverTests(unittest.TestCase):
         self.assertIn("5번", result.details[0])
         self.assertIn("7번", result.details[0])
         self.assertGreaterEqual(result.confidence, .68)
+
+    def test_fragment_solver_accepts_fourth_practice_fingerprint_scores(self) -> None:
+        target = np.zeros((240, 240, 3), dtype=np.uint8)
+        candidates = [np.zeros((80, 80, 3), dtype=np.uint8) for _ in range(8)]
+        measured_scores = iter((0.515, 0.726, 0.379, 0.388, 0.612, 0.311, 0.888, 0.335))
+
+        with patch("gta_helper.solvers._score_fingerprint_piece", side_effect=measured_scores):
+            result = FragmentFingerprintSolver().solve_regions(target, candidates)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.details[0], "선택: 1번 · 2번 · 5번 · 7번")
+        self.assertGreaterEqual(result.debug["margin"], .12)
+
+    def test_fragment_solver_uses_clear_margin_in_confidence(self) -> None:
+        target = np.zeros((240, 240, 3), dtype=np.uint8)
+        candidates = [np.zeros((80, 80, 3), dtype=np.uint8) for _ in range(8)]
+        measured_scores = iter((0.299, 0.391, 0.759, 0.363, 0.531, 0.785, 0.571, 0.329))
+
+        with patch("gta_helper.solvers._score_fingerprint_piece", side_effect=measured_scores):
+            result = FragmentFingerprintSolver().solve_regions(target, candidates)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.details[0], "선택: 3번 · 5번 · 6번 · 7번")
+        self.assertLess(result.debug["mean_score"], .68)
+        self.assertGreaterEqual(result.confidence, .68)
+
+    def test_fragment_solver_resolves_third_practice_fingerprint_lines(self) -> None:
+        target = np.zeros((240, 240, 3), dtype=np.uint8)
+        candidates = [np.zeros((80, 80, 3), dtype=np.uint8) for _ in range(8)]
+        measured_scores = iter((0.499, 0.449, 0.282, 0.267, 0.290, 0.828, 0.920, 0.872))
+
+        with patch("gta_helper.solvers._score_fingerprint_piece", side_effect=measured_scores):
+            result = FragmentFingerprintSolver().solve_regions(target, candidates)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.details[0], "선택: 1번 · 6번 · 7번 · 8번")
+        self.assertGreaterEqual(result.debug["margin"], .04)
 
     def test_cayo_solver_reports_minimum_turn_direction(self) -> None:
         bands = []
