@@ -80,15 +80,17 @@ def casino_fingerprint_layout(frame: np.ndarray) -> tuple[np.ndarray, list[np.nd
         and box.y + box.h <= target_panel.y + target_panel.h - 8
         and box.area > target_panel.area * .08 and .40 <= box.w / max(box.h, 1) <= 1.05
     ]
-    if not inner:
-        return None
     # 지문 선이 굵은 고해상도 화면에서는 내부 윤곽 하나가 큰 상자로 잡혀
     # 지문의 중앙 일부만 잘리는 경우가 있다. 외곽 패널은 안정적으로 잡히므로
     # 실제 CLONE TARGET 영역을 패널 상대 좌표로 자른다.
+    # 압축된 연습 화면에서는 지문 종류에 따라 내부 윤곽이 아예 검출되지 않고
+    # CLONE TARGET과 아래 DECRYPTED SIGNALS를 합친 바깥 패널만 잡힐 수 있다.
+    # 이때도 왼쪽 후보 패널과 바깥 패널은 안정적이므로, 세로 범위를 줄인
+    # 상대 좌표 폴백으로 실제 지문 영역만 자른다.
     target_x = round(target_panel.x + target_panel.w * .15)
-    target_y = round(target_panel.y + target_panel.h * .09)
+    target_y = round(target_panel.y + target_panel.h * (.09 if inner else .08))
     target_w = round(target_panel.w * .52)
-    target_h = round(target_panel.h * .80)
+    target_h = round(target_panel.h * (.80 if inner else .57))
     target = frame[target_y:target_y + target_h, target_x:target_x + target_w].copy()
     component_panels = [
         box for box in boxes
