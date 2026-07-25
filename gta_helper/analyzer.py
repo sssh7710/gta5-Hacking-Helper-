@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .models import SolveResult
+from .models import PuzzleType, SolveResult
 from .layout import casino_fingerprint_layout, cayo_layout
 from .solvers import CayoFingerprintSolver, DotMemorySolver, FragmentFingerprintSolver
 from .casino_reference import CasinoReferenceSolver
@@ -25,6 +25,7 @@ class PuzzleAnalyzer:
         self.casino_layout_checked = False
         self.casino_screen_visible = False
         self.casino_selection_visible = False
+        self._fingerprint_verification_pending = False
 
     def reset(self) -> None:
         self.dot.reset()
@@ -32,13 +33,16 @@ class PuzzleAnalyzer:
         self.casino_layout_checked = False
         self.casino_screen_visible = False
         self.casino_selection_visible = False
+        self._fingerprint_verification_pending = False
 
     def update(self, frame: np.ndarray) -> SolveResult | None:
-        # 점멸 원은 시간 정보가 필요하므로 매 프레임 처리한다.
+        # 지문 후보를 한 번 찾은 직후에는 점멸 퍼즐 전처리를 건너뛰고 다음
+        # 프레임에서 곧바로 재확인한다. 평상시에는 점멸 퍼즐을 계속 우선한다.
         self._frame_number += 1
         self.casino_layout_checked = False
-        result = self.dot.update(frame)
-        if result is None and self._frame_number % 4 == 0:
+        fingerprint_active = self.casino_screen_visible or self._fingerprint_verification_pending
+        result = None if fingerprint_active else self.dot.update(frame)
+        if result is None and (fingerprint_active or self._frame_number % 2 == 0):
             self.casino_layout_checked = True
             fragments = casino_fingerprint_layout(frame)
             self.casino_screen_visible = fragments is not None
@@ -59,9 +63,14 @@ class PuzzleAnalyzer:
                 if cayo is not None:
                     result = self.cayo.solve_regions(*cayo)
         if result is None:
+            if self.casino_layout_checked:
+                self._fingerprint_verification_pending = False
             return None
         self._seen[result.signature] += 1
         # 지문은 같은 답이 두 프레임 연속 확인될 때만 표시한다.
-        if result.puzzle.value != "점멸 원 기억" and self._seen[result.signature] < 2:
-            return None
+        if result.puzzle != PuzzleType.DOT_MEMORY:
+            if self._seen[result.signature] < 2:
+                self._fingerprint_verification_pending = True
+                return None
+            self._fingerprint_verification_pending = False
         return result

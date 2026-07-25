@@ -46,6 +46,17 @@ def _score_fingerprint_piece(target: np.ndarray, piece: np.ndarray) -> float:
     piece_gray = cv2.threshold(piece_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
     if cv2.countNonZero(piece_gray) < max(12, piece_gray.size * .006):
         return -1.0
+
+    # 1920x1080 실전 캡처에서는 원본 크기 그대로 다중 크기 비교를 하면
+    # 후보 8개 판정에 약 0.5~0.9초가 걸린다. 지문선 모양과 기존 임계값을
+    # 유지하는 범위에서 비교 영상만 축소해 matchTemplate 연산량을 줄인다.
+    processing_scale = .65
+    target_gray = cv2.resize(
+        target_gray, None, fx=processing_scale, fy=processing_scale, interpolation=cv2.INTER_AREA
+    )
+    piece_gray = cv2.resize(
+        piece_gray, None, fx=processing_scale, fy=processing_scale, interpolation=cv2.INTER_AREA
+    )
     best = -1.0
     for scale in np.arange(.50, 1.71, .05):
         resized = cv2.resize(

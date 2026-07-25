@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from gta_helper.analyzer import PuzzleAnalyzer
+from gta_helper.models import PuzzleType, SolveResult
 
 
 class AnalyzerTests(unittest.TestCase):
@@ -47,6 +48,29 @@ class AnalyzerTests(unittest.TestCase):
         self.assertTrue(analyzer.casino_layout_checked)
         self.assertTrue(analyzer.casino_screen_visible)
         self.assertTrue(analyzer.casino_selection_visible)
+
+    def test_fingerprint_candidate_is_rechecked_on_the_next_frame(self) -> None:
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        target = np.zeros((300, 220, 3), dtype=np.uint8)
+        candidates = [np.full((80, 80, 3), 10, dtype=np.uint8) for _ in range(8)]
+        answer = SolveResult(
+            PuzzleType.FRAGMENT_FINGERPRINT,
+            .90,
+            "지문 조각 정답",
+            details=["선택: 1번 · 3번 · 5번 · 7번"],
+        )
+        analyzer = PuzzleAnalyzer()
+        analyzer.dot.update = Mock(return_value=None)
+        analyzer.fragment.solve_regions = Mock(return_value=answer)
+
+        with patch("gta_helper.analyzer.casino_fingerprint_layout", return_value=(target, candidates)):
+            results = [analyzer.update(frame) for _ in range(3)]
+
+        self.assertIsNone(results[0])
+        self.assertIsNone(results[1])
+        self.assertEqual(results[2], answer)
+        self.assertEqual(analyzer.dot.update.call_count, 2)
+        self.assertEqual(analyzer.fragment.solve_regions.call_count, 2)
 
 
 if __name__ == "__main__":
