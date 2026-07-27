@@ -81,6 +81,7 @@ class Scanner(threading.Thread):
             duration_seconds=self.config.diagnostic_capture_seconds,
             fps=self.config.diagnostic_capture_fps,
             max_total_bytes=self.config.diagnostic_capture_max_mb * 1024 * 1024,
+            answer_confidence_threshold=self.config.confidence_threshold,
         )
         last_signature: tuple | None = None
         try:
@@ -366,7 +367,7 @@ class HelperApp:
         auto_update_var = tk.BooleanVar(value=self.config.auto_update_enabled)
         ttk.Checkbutton(body, text="새 버전 자동 확인", variable=auto_update_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=4)
         diagnostic_upload_var = tk.BooleanVar(value=self.config.diagnostic_upload_enabled)
-        upload_text = "미판단 인식 자료 자동 전송" if self.reporter.configured else "미판단 인식 자료 자동 전송 (서버 준비 전)"
+        upload_text = "인식 결과 자료 자동 전송 (성공/실패)" if self.reporter.configured else "인식 결과 자료 자동 전송 (서버 준비 전)"
         ttk.Checkbutton(body, text=upload_text, variable=diagnostic_upload_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=4)
         ttk.Label(body, text="※ 전송 자료에는 GTA 게임 화면이 포함될 수 있습니다.", foreground="#9a6700").grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 4))
         ttk.Label(body, text="인식 자료 최대 용량 (MB)").grid(row=7, column=0, sticky="w", pady=4)

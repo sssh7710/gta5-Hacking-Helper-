@@ -28,6 +28,7 @@ class DiagnosticFrameRecorder:
         fps: float = 8.0,
         max_total_bytes: int = 1024 * 1024 * 1024,
         jpeg_quality: int = 92,
+        answer_confidence_threshold: float = 0.68,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.directory = Path(directory)
@@ -35,6 +36,7 @@ class DiagnosticFrameRecorder:
         self.fps = max(1.0, float(fps))
         self.max_total_bytes = max(1, int(max_total_bytes))
         self.jpeg_quality = min(100, max(70, int(jpeg_quality)))
+        self.answer_confidence_threshold = float(answer_confidence_threshold)
         self._clock = clock
         self._session_dir: Path | None = None
         self._started_at = 0.0
@@ -122,17 +124,31 @@ class DiagnosticFrameRecorder:
         if self._session_dir is None:
             return None
         session_dir = self._session_dir
+        confidence = self._metadata.get("result_confidence")
+        try:
+            answer_provided = bool(self._metadata.get("result_summary")) and float(confidence) >= self.answer_confidence_threshold
+        except (TypeError, ValueError):
+            answer_provided = False
+        outcome = "success" if answer_provided else "failure"
         self._metadata.update({
             "completed_at": datetime.now().isoformat(timespec="milliseconds"),
             "frame_count": self._frame_number,
+            "answer_outcome": outcome,
+            "answer_provided": answer_provided,
+            "answer_confidence_threshold": self.answer_confidence_threshold,
         })
         try:
             (session_dir / "session.json").write_text(
                 json.dumps(self._metadata, ensure_ascii=False, indent=2, default=self._json_default),
                 encoding="utf-8",
             )
+            category_dir = self.directory / outcome
+            category_dir.mkdir(parents=True, exist_ok=True)
+            categorized_session_dir = category_dir / session_dir.name
+            session_dir.rename(categorized_session_dir)
+            session_dir = categorized_session_dir
         except OSError as exc:
-            raise CaptureError(f"인식 개선 자료 정보를 저장하지 못했습니다: {session_dir}") from exc
+            raise CaptureError(f"인식 개선 자료를 저장하고 분류하지 못했습니다: {session_dir}") from exc
         finally:
             self._session_dir = None
             self._metadata = {}
@@ -147,6 +163,13 @@ class DiagnosticFrameRecorder:
         if not self.directory.exists():
             return []
         sessions = [path for path in self.directory.iterdir() if path.is_dir() and path.name.startswith("attempt_")]
+        for category in ("success", "failure"):
+            category_dir = self.directory / category
+            if category_dir.is_dir():
+                sessions.extend(
+                    path for path in category_dir.iterdir()
+                    if path.is_dir() and path.name.startswith("attempt_")
+                )
         sessions.sort(key=lambda path: (path.stat().st_mtime, path.name))
         sizes = {path: sum(item.stat().st_size for item in path.rglob("*") if item.is_file()) for path in sessions}
         total = sum(sizes.values())

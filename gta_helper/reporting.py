@@ -21,19 +21,26 @@ class ReportError(RuntimeError):
     pass
 
 
-def is_unresolved_session(session_dir: str | Path, confidence_threshold: float) -> bool:
+def session_outcome(session_dir: str | Path, confidence_threshold: float) -> str | None:
     metadata_path = Path(session_dir) / "session.json"
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return False
+        return None
+    recorded = metadata.get("answer_outcome")
+    if recorded in {"success", "failure"}:
+        return str(recorded)
     confidence = metadata.get("result_confidence")
     if confidence is None or not metadata.get("result_summary"):
-        return True
+        return "failure"
     try:
-        return float(confidence) < confidence_threshold
+        return "success" if float(confidence) >= confidence_threshold else "failure"
     except (TypeError, ValueError):
-        return True
+        return "failure"
+
+
+def is_unresolved_session(session_dir: str | Path, confidence_threshold: float) -> bool:
+    return session_outcome(session_dir, confidence_threshold) == "failure"
 
 
 def build_report_archive(session_dir: str | Path, target: str | Path) -> Path:
@@ -90,16 +97,19 @@ class DiagnosticReporter(threading.Thread):
         self.endpoint = endpoint.strip()
         self.confidence_threshold = confidence_threshold
         self.notify = notify or (lambda message: None)
-        self._queue: queue.Queue[Path | None] = queue.Queue()
+        self._queue: queue.Queue[tuple[Path, str] | None] = queue.Queue()
 
     @property
     def configured(self) -> bool:
         return self.endpoint.lower().startswith("https://")
 
     def submit(self, session_dir: str | Path) -> bool:
-        if not self.configured or not is_unresolved_session(session_dir, self.confidence_threshold):
+        if not self.configured:
             return False
-        self._queue.put(Path(session_dir))
+        outcome = session_outcome(session_dir, self.confidence_threshold)
+        if outcome is None:
+            return False
+        self._queue.put((Path(session_dir), outcome))
         return True
 
     def stop(self) -> None:
@@ -107,12 +117,14 @@ class DiagnosticReporter(threading.Thread):
 
     def run(self) -> None:
         while True:
-            session = self._queue.get()
-            if session is None:
+            item = self._queue.get()
+            if item is None:
                 return
+            session, outcome = item
             try:
                 report_id = upload_report(session, self.endpoint)
             except ReportError as exc:
                 self.notify(str(exc))
             else:
-                self.notify(f"미판단 인식 자료 전송 완료: {report_id[:8]}")
+                label = "성공" if outcome == "success" else "실패"
+                self.notify(f"인식 결과 자료 전송 완료 ({label}): {report_id[:8]}")
