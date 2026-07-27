@@ -6,7 +6,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from gta_helper.reporting import build_report_archive, is_unresolved_session
+from gta_helper.reporting import DiagnosticReporter, build_report_archive, is_unresolved_session, session_outcome
 
 
 class ReportingTests(unittest.TestCase):
@@ -22,6 +22,24 @@ class ReportingTests(unittest.TestCase):
 
             metadata.write_text(json.dumps({"result_summary": "answer", "result_confidence": 0.9}), encoding="utf-8")
             self.assertFalse(is_unresolved_session(session, 0.68))
+            self.assertEqual(session_outcome(session, 0.68), "success")
+
+            metadata.write_text(json.dumps({"answer_outcome": "failure", "result_summary": "answer", "result_confidence": 0.9}), encoding="utf-8")
+            self.assertEqual(session_outcome(session, 0.68), "failure")
+
+    def test_reporter_queues_success_and_failure_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reporter = DiagnosticReporter("https://example.invalid/v1/reports", 0.68)
+            for name, metadata in (
+                ("success", {"answer_outcome": "success"}),
+                ("failure", {"answer_outcome": "failure"}),
+            ):
+                session = root / name
+                session.mkdir()
+                (session / "session.json").write_text(json.dumps(metadata), encoding="utf-8")
+                self.assertTrue(reporter.submit(session))
+            self.assertEqual(reporter._queue.qsize(), 2)
 
     def test_report_contains_only_metadata_and_session_jpegs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

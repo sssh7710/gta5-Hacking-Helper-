@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-SERVICE_VERSION = "1.0.0"
+SERVICE_VERSION = "1.1.0"
 MAX_REQUEST_BYTES = 50 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
 MAX_METADATA_BYTES = 1024 * 1024
@@ -33,6 +33,27 @@ class ValidationError(ValueError):
 
 class StorageFullError(OSError):
     pass
+
+
+def classify_report(metadata: dict[str, Any], default_threshold: float = 0.68) -> str:
+    recorded = metadata.get("answer_outcome")
+    if recorded in {"success", "failure"}:
+        return str(recorded)
+    threshold = metadata.get("answer_confidence_threshold", default_threshold)
+    try:
+        confidence = float(metadata.get("result_confidence"))
+        threshold_value = float(threshold)
+    except (TypeError, ValueError):
+        return "failure"
+    return "success" if metadata.get("result_summary") and confidence >= threshold_value else "failure"
+
+
+def report_files(storage: str | Path) -> list[Path]:
+    root = Path(storage)
+    return [
+        *[path for path in root.glob("????-??-??/*.zip") if path.is_file()],
+        *[path for path in root.glob("*/????-??-??/*.zip") if path.is_file()],
+    ]
 
 
 def validate_report_archive(data: bytes) -> dict[str, Any]:
@@ -76,15 +97,25 @@ def validate_report_archive(data: bytes) -> dict[str, Any]:
     return metadata
 
 
-def store_report(data: bytes, report_id: str, storage: str | Path, now: datetime | None = None) -> tuple[Path, bool]:
+def store_report(
+    data: bytes,
+    report_id: str,
+    storage: str | Path,
+    outcome: str,
+    now: datetime | None = None,
+) -> tuple[Path, bool]:
+    if outcome not in {"success", "failure"}:
+        raise ValueError("outcome은 success 또는 failure여야 합니다.")
     current = now or datetime.now(timezone.utc)
     day = current.strftime("%Y-%m-%d")
-    directory = Path(storage) / day
+    root = Path(storage)
+    directory = root / outcome / day
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"{report_id}.zip"
-    if target.exists():
-        return target, False
-    stored_bytes = sum(path.stat().st_size for path in Path(storage).glob("????-??-??/*.zip") if path.is_file())
+    existing = next((path for path in report_files(root) if path.name == target.name), None)
+    if existing is not None:
+        return existing, False
+    stored_bytes = sum(path.stat().st_size for path in report_files(root))
     if stored_bytes + len(data) > MAX_STORAGE_BYTES:
         raise StorageFullError("진단 자료 저장 한도에 도달했습니다.")
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{report_id}.", suffix=".tmp", dir=directory)
@@ -109,18 +140,16 @@ def cleanup_reports(storage: str | Path, retention_days: int, now: datetime | No
         return 0
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=max(1, retention_days))
     removed = 0
-    for path in root.glob("????-??-??/*.zip"):
+    for path in report_files(root):
         try:
             modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
             if modified < cutoff:
                 path.unlink()
                 removed += 1
-        except StorageFullError:
-            self._json_response(HTTPStatus.INSUFFICIENT_STORAGE, {"error": "storage_full"})
-            return
         except OSError:
             continue
-    for directory in root.glob("????-??-??"):
+    directories = [*root.glob("????-??-??"), *root.glob("*/????-??-??")]
+    for directory in directories:
         try:
             directory.rmdir()
         except OSError:
@@ -181,21 +210,25 @@ class ReportHandler(BaseHTTPRequestHandler):
             self._json_response(HTTPStatus.BAD_REQUEST, {"error": "length"})
             return
         try:
-            validate_report_archive(data)
-            _, created = store_report(data, report_id, self.server.storage)
+            metadata = validate_report_archive(data)
+            outcome = classify_report(metadata)
+            _, created = store_report(data, report_id, self.server.storage, outcome)
         except ValidationError as exc:
             self._json_response(HTTPStatus.BAD_REQUEST, {"error": "invalid_report", "message": str(exc)})
+            return
+        except StorageFullError:
+            self._json_response(HTTPStatus.INSUFFICIENT_STORAGE, {"error": "storage_full"})
             return
         except OSError:
             self._json_response(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "storage"})
             return
         digest = hashlib.sha256(data).hexdigest()
-        print(f"report accepted id={report_id[:8]} created={created} bytes={len(data)} sha256={digest}", flush=True)
-        self._json_response(HTTPStatus.OK, {"report_id": report_id, "created": created})
+        print(f"report accepted id={report_id[:8]} outcome={outcome} created={created} bytes={len(data)} sha256={digest}", flush=True)
+        self._json_response(HTTPStatus.OK, {"report_id": report_id, "outcome": outcome, "created": created})
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="GTA 미판단 인식 자료 수신기")
+    parser = argparse.ArgumentParser(description="GTA 인식 성공/실패 자료 수신기")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--storage", type=Path, default=Path("/var/lib/gta-report-receiver"))

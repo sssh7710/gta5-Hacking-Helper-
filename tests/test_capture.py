@@ -20,7 +20,7 @@ class DiagnosticFrameRecorderTests(unittest.TestCase):
             session_dir = recorder.start(frame, "keypad_5x4", {"grid_columns": 5})
             self.assertTrue(recorder.active)
             self.assertEqual(recorder.start(frame, "ignored"), session_dir)
-            recorder.annotate(result_confidence=np.float32(0.91))
+            recorder.annotate(result_summary="정답", result_confidence=np.float32(0.91))
 
             now[0] = 100.2
             self.assertIsNone(recorder.add(frame))
@@ -29,21 +29,43 @@ class DiagnosticFrameRecorderTests(unittest.TestCase):
             now[0] = 107.0
             completed = recorder.add(frame)
 
-            self.assertEqual(completed, session_dir)
+            self.assertIsNotNone(completed)
+            assert completed is not None
+            self.assertEqual(completed.parent.name, "success")
+            self.assertEqual(completed.name, session_dir.name)
             self.assertFalse(recorder.active)
-            self.assertEqual(len(list(session_dir.glob("frame_*.jpg"))), 3)
-            metadata = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))
+            self.assertFalse(session_dir.exists())
+            self.assertEqual(len(list(completed.glob("frame_*.jpg"))), 3)
+            metadata = json.loads((completed / "session.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["frame_count"], 3)
             self.assertEqual(metadata["grid_columns"], 5)
             self.assertAlmostEqual(metadata["result_confidence"], 0.91, places=5)
+            self.assertEqual(metadata["answer_outcome"], "success")
+            self.assertTrue(metadata["answer_provided"])
+
+    def test_stores_missing_answer_in_failure_folder(self) -> None:
+        frame = np.zeros((90, 160, 3), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = DiagnosticFrameRecorder(directory)
+            started = recorder.start(frame, "unresolved")
+            completed = recorder.finish()
+
+            self.assertIsNotNone(completed)
+            assert completed is not None
+            self.assertEqual(completed.parent.name, "failure")
+            self.assertEqual(completed.name, started.name)
+            metadata = json.loads((completed / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["answer_outcome"], "failure")
+            self.assertFalse(metadata["answer_provided"])
 
     def test_prunes_oldest_attempt_folder_when_total_limit_is_exceeded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             oldest = root / "attempt_20260101_000000_old"
-            newer = root / "attempt_20260102_000000_new"
+            newer = root / "success" / "attempt_20260102_000000_new"
             oldest.mkdir()
-            newer.mkdir()
+            newer.mkdir(parents=True)
             (oldest / "frame.jpg").write_bytes(b"a" * 80)
             (newer / "frame.jpg").write_bytes(b"b" * 80)
 

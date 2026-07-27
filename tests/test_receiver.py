@@ -10,7 +10,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from server.receiver import ReportServer, ValidationError, cleanup_reports, store_report, validate_report_archive
+from server.receiver import ReportServer, ValidationError, classify_report, cleanup_reports, store_report, validate_report_archive
 
 
 def report_zip(metadata: dict[str, object] | None = None, image: bytes = b"\xff\xd8jpeg\xff\xd9") -> bytes:
@@ -25,6 +25,13 @@ class ReceiverTests(unittest.TestCase):
     def test_accepts_expected_session_archive(self) -> None:
         metadata = validate_report_archive(report_zip({"label": "fragment_fingerprint_pending"}))
         self.assertEqual(metadata["label"], "fragment_fingerprint_pending")
+
+    def test_classifies_success_and_failure_with_backward_compatibility(self) -> None:
+        self.assertEqual(classify_report({"answer_outcome": "success"}), "success")
+        self.assertEqual(classify_report({"answer_outcome": "failure"}), "failure")
+        self.assertEqual(classify_report({"result_summary": "answer", "result_confidence": 0.9}), "success")
+        self.assertEqual(classify_report({"result_summary": "candidate", "result_confidence": 0.5}), "failure")
+        self.assertEqual(classify_report({"label": "pending"}), "failure")
 
     def test_rejects_non_jpeg_and_nested_paths(self) -> None:
         with self.assertRaises(ValidationError):
@@ -41,11 +48,12 @@ class ReceiverTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             now = datetime(2026, 7, 27, tzinfo=timezone.utc)
             data = report_zip()
-            path, created = store_report(data, "a" * 32, directory, now=now)
-            duplicate, created_again = store_report(data, "a" * 32, directory, now=now)
+            path, created = store_report(data, "a" * 32, directory, "failure", now=now)
+            duplicate, created_again = store_report(data, "a" * 32, directory, "failure", now=now)
             self.assertTrue(created)
             self.assertFalse(created_again)
             self.assertEqual(path, duplicate)
+            self.assertEqual(path.parent.parent.name, "failure")
             self.assertEqual(path.read_bytes(), data)
 
             removed = cleanup_reports(directory, 30, now=datetime(2026, 9, 1, tzinfo=timezone.utc))
@@ -57,7 +65,7 @@ class ReceiverTests(unittest.TestCase):
             server = ReportServer(("127.0.0.1", 0), directory)
             worker = threading.Thread(target=server.serve_forever, daemon=True)
             worker.start()
-            data = report_zip()
+            data = report_zip({"answer_outcome": "success", "result_summary": "answer", "result_confidence": 0.9})
             report_id = "b" * 32
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/v1/reports",
@@ -73,11 +81,13 @@ class ReceiverTests(unittest.TestCase):
             try:
                 with urllib.request.urlopen(request, timeout=3) as response:
                     self.assertEqual(response.status, 200)
+                    payload = json.loads(response.read().decode("utf-8"))
+                    self.assertEqual(payload["outcome"], "success")
             finally:
                 server.shutdown()
                 server.server_close()
                 worker.join(timeout=3)
-            self.assertEqual(len(list(Path(directory).glob(f"????-??-??/{report_id}.zip"))), 1)
+            self.assertEqual(len(list(Path(directory).glob(f"success/????-??-??/{report_id}.zip"))), 1)
 
 
 if __name__ == "__main__":
