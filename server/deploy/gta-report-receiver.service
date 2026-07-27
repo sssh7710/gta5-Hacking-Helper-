@@ -1,0 +1,26 @@
+[Unit]
+Description=GTA recognition report receiver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gta-report
+Group=gta-report
+WorkingDirectory=/opt/gta-report-receiver
+ExecStart=/usr/bin/python3 -B /opt/gta-report-receiver/receiver.py --host 127.0.0.1 --port 8765 --storage /var/lib/gta-report-receiver
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gta-report-receiver
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

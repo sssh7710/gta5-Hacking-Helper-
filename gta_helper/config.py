@@ -37,6 +37,9 @@ class AppConfig:
     diagnostic_capture_seconds: float = 7.0
     diagnostic_capture_fps: int = 8
     diagnostic_capture_max_mb: int = 1024
+    auto_update_enabled: bool = True
+    diagnostic_upload_enabled: bool = True
+    diagnostic_upload_url: str = "https://gta-reports.217-142-244-125.sslip.io/v1/reports"
     game_title_patterns: list[str] = field(default_factory=lambda: ["grand theft auto", "gta v"])
 
     @classmethod

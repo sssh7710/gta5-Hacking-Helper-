@@ -15,16 +15,23 @@ class ConfigTests(unittest.TestCase):
             self.assertFalse(config.controls_legend_enabled)
             self.assertTrue(config.diagnostic_capture_enabled)
             self.assertEqual(config.diagnostic_capture_max_mb, 1024)
+            self.assertTrue(config.auto_update_enabled)
+            self.assertTrue(config.diagnostic_upload_enabled)
+            self.assertTrue(config.diagnostic_upload_url.startswith("https://"))
             config.custom_keys["select"] = "Space"
             config.controls_legend_enabled = True
             config.diagnostic_capture_enabled = False
             config.diagnostic_capture_max_mb = 500
+            config.auto_update_enabled = False
+            config.diagnostic_upload_enabled = False
             config.save(path)
             loaded = AppConfig.load(path)
             self.assertEqual(loaded.custom_keys["select"], "Space")
             self.assertTrue(loaded.controls_legend_enabled)
             self.assertFalse(loaded.diagnostic_capture_enabled)
             self.assertEqual(loaded.diagnostic_capture_max_mb, 500)
+            self.assertFalse(loaded.auto_update_enabled)
+            self.assertFalse(loaded.diagnostic_upload_enabled)
             self.assertIn("up", loaded.custom_keys)
         finally:
             if path.exists():

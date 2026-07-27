@@ -1,0 +1,14 @@
+[Unit]
+Description=Delete expired GTA recognition reports
+
+[Service]
+Type=oneshot
+User=gta-report
+Group=gta-report
+ExecStart=/usr/bin/python3 -B /opt/gta-report-receiver/receiver.py --storage /var/lib/gta-report-receiver --cleanup --retention-days 30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gta-report-receiver

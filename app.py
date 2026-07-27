@@ -40,7 +40,10 @@ from gta_helper.analyzer import PuzzleAnalyzer
 from gta_helper.capture import CaptureError, DiagnosticFrameRecorder, DxCapture
 from gta_helper.config import AppConfig
 from gta_helper.models import AppState, DisplayMode, PuzzleType, SolveResult
+from gta_helper.reporting import DiagnosticReporter
 from gta_helper.speech import SpeechService
+from gta_helper.updater import UpdateError, UpdateInfo, check_for_update, download_update
+from gta_helper.version import APP_VERSION
 from gta_helper.windowing import enable_click_through, exclude_from_capture, find_game_window, set_dpi_aware
 
 
@@ -120,6 +123,7 @@ class Scanner(threading.Thread):
                     completed_session = recorder.add(frame)
                     if completed_session is not None:
                         self.events.put(("status", f"인식 개선 사진 저장: {completed_session.name}"))
+                        self.events.put(("diagnostic_completed", completed_session))
                 except CaptureError as exc:
                     self.events.put(("status", str(exc)))
                 if self.diagnostic_event.is_set():
@@ -232,7 +236,9 @@ class Scanner(threading.Thread):
         except Exception as exc:
             self.events.put(("state", (AppState.ERROR, f"스캐너 오류: {exc}")))
         finally:
-            recorder.close()
+            completed_session = recorder.close()
+            if completed_session is not None:
+                self.events.put(("diagnostic_completed", completed_session))
             if self._capture:
                 self._capture.close()
 
@@ -244,7 +250,7 @@ class HelperApp:
         self.config = AppConfig.load(self.config_path)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.root = tk.Tk()
-        self.root.title("GTA 해킹 안내 도우미")
+        self.root.title(f"GTA 해킹 안내 도우미 {APP_VERSION}")
         self.root.geometry(f"{self.config.overlay_width}x{self.config.overlay_height}+{self.config.overlay_x}+{self.config.overlay_y}")
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", self.config.overlay_opacity)
@@ -257,11 +263,20 @@ class HelperApp:
         self.controls_var = tk.StringVar(value="")
         self.mode_var = tk.StringVar(value=self.config.display_mode)
         self._fit_scheduled = False
+        self._pending_update_archive: Path | None = None
         self.voice = SpeechService(self.config.voice_enabled, self.config.voice_rate)
+        self.reporter = DiagnosticReporter(
+            self.config.diagnostic_upload_url if self.config.diagnostic_upload_enabled else "",
+            self.config.confidence_threshold,
+            notify=lambda message: self.events.put(("status", message)),
+        )
         self.scanner = Scanner(self.config, self.events)
         self._build_ui()
         self._apply_mode(initial=True)
+        self.reporter.start()
         self.scanner.start()
+        if self.config.auto_update_enabled:
+            threading.Thread(target=self._check_for_updates, daemon=True, name="gta-helper-update-check").start()
         self.root.after(100, self._drain_events)
 
     def _build_ui(self) -> None:
@@ -348,20 +363,26 @@ class HelperApp:
         ttk.Checkbutton(body, text="조작 범례 표시", variable=controls_legend_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
         diagnostic_capture_var = tk.BooleanVar(value=self.config.diagnostic_capture_enabled)
         ttk.Checkbutton(body, text="인식 개선 사진 자동 저장 (약 7초)", variable=diagnostic_capture_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Label(body, text="인식 자료 최대 용량 (MB)").grid(row=4, column=0, sticky="w", pady=4)
+        auto_update_var = tk.BooleanVar(value=self.config.auto_update_enabled)
+        ttk.Checkbutton(body, text="새 버전 자동 확인", variable=auto_update_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=4)
+        diagnostic_upload_var = tk.BooleanVar(value=self.config.diagnostic_upload_enabled)
+        upload_text = "미판단 인식 자료 자동 전송" if self.reporter.configured else "미판단 인식 자료 자동 전송 (서버 준비 전)"
+        ttk.Checkbutton(body, text=upload_text, variable=diagnostic_upload_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Label(body, text="※ 전송 자료에는 GTA 게임 화면이 포함될 수 있습니다.", foreground="#9a6700").grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Label(body, text="인식 자료 최대 용량 (MB)").grid(row=7, column=0, sticky="w", pady=4)
         diagnostic_max_var = tk.IntVar(value=self.config.diagnostic_capture_max_mb)
-        ttk.Spinbox(body, from_=100, to=10240, increment=100, textvariable=diagnostic_max_var, width=20).grid(row=4, column=1, padx=8)
-        ttk.Label(body, text="캡처 백엔드").grid(row=5, column=0, sticky="w", pady=4)
+        ttk.Spinbox(body, from_=100, to=10240, increment=100, textvariable=diagnostic_max_var, width=20).grid(row=7, column=1, padx=8)
+        ttk.Label(body, text="캡처 백엔드").grid(row=8, column=0, sticky="w", pady=4)
         backend = ttk.Combobox(body, state="readonly", width=22, values=["auto", "dxgi", "winrt"])
         backend.set(self.config.capture_backend)
-        backend.grid(row=5, column=1, padx=8)
-        ttk.Label(body, text="입력 프로필").grid(row=6, column=0, sticky="w", pady=4)
+        backend.grid(row=8, column=1, padx=8)
+        ttk.Label(body, text="입력 프로필").grid(row=9, column=0, sticky="w", pady=4)
         profile = ttk.Combobox(body, state="readonly", width=22, values=list(INPUT_PROFILES))
         profile.set(self.config.input_profile)
-        profile.grid(row=6, column=1, padx=8)
-        ttk.Label(body, text="사용자 키 (위/아래/왼쪽/오른쪽/선택/뒤로)").grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 2))
+        profile.grid(row=9, column=1, padx=8)
+        ttk.Label(body, text="사용자 키 (위/아래/왼쪽/오른쪽/선택/뒤로)").grid(row=10, column=0, columnspan=2, sticky="w", pady=(8, 2))
         key_vars: dict[str, tk.StringVar] = {}
-        for row, key in enumerate(("up", "down", "left", "right", "select", "back"), start=8):
+        for row, key in enumerate(("up", "down", "left", "right", "select", "back"), start=11):
             ttk.Label(body, text=key).grid(row=row, column=0, sticky="w", pady=1)
             value = tk.StringVar(value=self.config.custom_keys[key])
             key_vars[key] = value
@@ -371,6 +392,8 @@ class HelperApp:
             self.config.voice_enabled = voice_var.get()
             self.config.controls_legend_enabled = controls_legend_var.get()
             self.config.diagnostic_capture_enabled = diagnostic_capture_var.get()
+            self.config.auto_update_enabled = auto_update_var.get()
+            self.config.diagnostic_upload_enabled = diagnostic_upload_var.get()
             try:
                 self.config.diagnostic_capture_max_mb = max(100, min(10240, int(diagnostic_max_var.get())))
             except (tk.TclError, ValueError):
@@ -382,9 +405,36 @@ class HelperApp:
             self._refresh_controls()
             self.config.save(self.config_path)
             dialog.destroy()
-            messagebox.showinfo("설정 저장", "설정을 저장했습니다. 캡처/음성 변경은 다음 실행부터 적용됩니다.")
+            messagebox.showinfo("설정 저장", "설정을 저장했습니다. 일부 변경은 다음 실행부터 적용됩니다.")
 
-        ttk.Button(body, text="저장", command=save).grid(row=14, column=1, sticky="e", pady=(10, 0))
+        ttk.Button(body, text="저장", command=save).grid(row=17, column=1, sticky="e", pady=(10, 0))
+
+    def _check_for_updates(self) -> None:
+        try:
+            info = check_for_update(APP_VERSION)
+        except UpdateError as exc:
+            self.events.put(("update_error", str(exc)))
+            return
+        if info is not None:
+            self.events.put(("update_available", info))
+
+    def _download_update(self, info: UpdateInfo) -> None:
+        try:
+            archive = download_update(info, ROOT / "updates")
+        except (OSError, UpdateError) as exc:
+            self.events.put(("update_error", str(exc)))
+        else:
+            self.events.put(("update_downloaded", (info, archive)))
+
+    def _offer_update(self, info: UpdateInfo) -> None:
+        if not messagebox.askyesno(
+            "새 버전 발견",
+            f"{info.tag} 버전이 있습니다.\n지금 내려받아 업데이트할까요?\n\n설정과 진단 자료는 유지됩니다.",
+            parent=self.root,
+        ):
+            return
+        self.detail_var.set(f"{info.tag} 업데이트 다운로드 중")
+        threading.Thread(target=self._download_update, args=(info,), daemon=True, name="gta-helper-update-download").start()
 
     def _drain_events(self) -> None:
         content_changed = False
@@ -432,6 +482,21 @@ class HelperApp:
                 else:
                     self.detail_var.set("신뢰도가 낮아 답을 표시하지 않았습니다. 진단 저장을 사용하세요.")
                     content_changed = True
+            elif kind == "diagnostic_completed":
+                if self.config.diagnostic_upload_enabled:
+                    self.reporter.submit(payload)  # type: ignore[arg-type]
+            elif kind == "update_available":
+                self._offer_update(payload)  # type: ignore[arg-type]
+            elif kind == "update_downloaded":
+                info, archive = payload  # type: ignore[misc]
+                self._pending_update_archive = archive
+                messagebox.showinfo("업데이트 준비 완료", f"{info.tag} 업데이트를 적용하기 위해 프로그램을 다시 시작합니다.", parent=self.root)
+                self.close()
+                return
+            elif kind == "update_error":
+                # 네트워크가 없는 환경에서도 프로그램 사용을 방해하지 않는다.
+                self.detail_var.set(f"업데이트 확인 건너뜀: {payload}")
+                content_changed = True
         if content_changed:
             self._schedule_fit()
         self.root.after(100, self._drain_events)
@@ -441,11 +506,20 @@ class HelperApp:
         self.config.overlay_width, self.config.overlay_height = self.root.winfo_width(), self.root.winfo_height()
         self.config.save(self.config_path)
         self.scanner.stop()
+        self.reporter.stop()
         self.voice.close()
         self.root.destroy()
 
     def run(self) -> None:
         self.root.mainloop()
+        self.scanner.join(timeout=3.0)
+        self.reporter.join(timeout=3.0)
+        if self._pending_update_archive is not None:
+            subprocess.Popen(
+                [str(VENV_PYTHON), "-B", str(ROOT / "update_installer.py"), str(self._pending_update_archive), str(ROOT)],
+                cwd=str(ROOT),
+                close_fds=True,
+            )
 
 
 if __name__ == "__main__":
