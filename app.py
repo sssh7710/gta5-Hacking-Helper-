@@ -284,12 +284,18 @@ class HelperApp:
         panel = tk.Frame(self.root, bg="#111827", padx=14, pady=12)
         self.panel = panel
         panel.pack(fill="both", expand=True)
-        tk.Label(panel, text="GTA 해킹 안내 도우미", bg="#111827", fg="#f9fafb", font=("맑은 고딕", 14, "bold")).pack(anchor="w")
-        tk.Label(panel, textvariable=self.state_var, bg="#111827", fg="#60a5fa", font=("맑은 고딕", 10, "bold")).pack(anchor="w", pady=(5, 0))
-        tk.Label(panel, textvariable=self.detail_var, bg="#111827", fg="#d1d5db", wraplength=350, justify="left").pack(anchor="w")
-        tk.Label(panel, textvariable=self.answer_var, bg="#111827", fg="#fef3c7", font=("맑은 고딕", 11, "bold"), wraplength=355, justify="left").pack(anchor="w", pady=(12, 2))
-        tk.Label(panel, textvariable=self.confidence_var, bg="#111827", fg="#9ca3af").pack(anchor="w")
-        tk.Label(panel, textvariable=self.controls_var, bg="#111827", fg="#9ca3af", wraplength=355, justify="left").pack(anchor="w")
+        self.title_label = tk.Label(panel, text="GTA 해킹 안내 도우미", bg="#111827", fg="#f9fafb")
+        self.title_label.pack(anchor="w")
+        self.state_label = tk.Label(panel, textvariable=self.state_var, bg="#111827", fg="#60a5fa")
+        self.state_label.pack(anchor="w", pady=(5, 0))
+        self.detail_label = tk.Label(panel, textvariable=self.detail_var, bg="#111827", fg="#d1d5db", wraplength=350, justify="left")
+        self.detail_label.pack(anchor="w")
+        self.answer_label = tk.Label(panel, textvariable=self.answer_var, bg="#111827", fg="#fef3c7", wraplength=355, justify="left")
+        self.answer_label.pack(anchor="w", pady=(12, 2))
+        self.confidence_label = tk.Label(panel, textvariable=self.confidence_var, bg="#111827", fg="#9ca3af")
+        self.confidence_label.pack(anchor="w")
+        self.controls_label = tk.Label(panel, textvariable=self.controls_var, bg="#111827", fg="#9ca3af", wraplength=355, justify="left")
+        self.controls_label.pack(anchor="w")
         buttons = tk.Frame(panel, bg="#111827")
         buttons.pack(side="bottom", fill="x", pady=(10, 0))
         ttk.Button(buttons, text="설정", command=self.show_settings).pack(side="left")
@@ -298,7 +304,20 @@ class HelperApp:
         self.lock_button = ttk.Button(buttons, text="오버레이 잠금", command=self.toggle_lock)
         self.lock_button.pack(side="left")
         ttk.Button(buttons, text="종료", command=self.close).pack(side="right")
+        self._apply_font_size()
         self._refresh_controls()
+
+    def _apply_font_size(self) -> None:
+        size = max(8, min(24, int(self.config.guide_font_size)))
+        self.config.guide_font_size = size
+        secondary_size = max(8, size - 2)
+        self.title_label.configure(font=("맑은 고딕", size + 3, "bold"))
+        self.state_label.configure(font=("맑은 고딕", max(8, size - 1), "bold"))
+        self.detail_label.configure(font=("맑은 고딕", secondary_size))
+        self.answer_label.configure(font=("맑은 고딕", size, "bold"))
+        self.confidence_label.configure(font=("맑은 고딕", secondary_size))
+        self.controls_label.configure(font=("맑은 고딕", secondary_size))
+        self._schedule_fit()
 
     def _refresh_controls(self) -> None:
         if not self.config.controls_legend_enabled:
@@ -370,20 +389,23 @@ class HelperApp:
         upload_text = "인식 결과 자료 자동 전송 (성공/실패)" if self.reporter.configured else "인식 결과 자료 자동 전송 (서버 준비 전)"
         ttk.Checkbutton(body, text=upload_text, variable=diagnostic_upload_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=4)
         ttk.Label(body, text="※ 전송 자료에는 GTA 게임 화면이 포함될 수 있습니다.", foreground="#9a6700").grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        ttk.Label(body, text="인식 자료 최대 용량 (MB)").grid(row=7, column=0, sticky="w", pady=4)
+        ttk.Label(body, text="안내 글자 크기").grid(row=7, column=0, sticky="w", pady=4)
+        font_size_var = tk.IntVar(value=self.config.guide_font_size)
+        ttk.Spinbox(body, from_=8, to=24, increment=1, textvariable=font_size_var, width=20).grid(row=7, column=1, padx=8)
+        ttk.Label(body, text="인식 자료 최대 용량 (MB)").grid(row=8, column=0, sticky="w", pady=4)
         diagnostic_max_var = tk.IntVar(value=self.config.diagnostic_capture_max_mb)
-        ttk.Spinbox(body, from_=100, to=10240, increment=100, textvariable=diagnostic_max_var, width=20).grid(row=7, column=1, padx=8)
-        ttk.Label(body, text="캡처 백엔드").grid(row=8, column=0, sticky="w", pady=4)
+        ttk.Spinbox(body, from_=100, to=10240, increment=100, textvariable=diagnostic_max_var, width=20).grid(row=8, column=1, padx=8)
+        ttk.Label(body, text="캡처 백엔드").grid(row=9, column=0, sticky="w", pady=4)
         backend = ttk.Combobox(body, state="readonly", width=22, values=["auto", "dxgi", "winrt"])
         backend.set(self.config.capture_backend)
-        backend.grid(row=8, column=1, padx=8)
-        ttk.Label(body, text="입력 프로필").grid(row=9, column=0, sticky="w", pady=4)
+        backend.grid(row=9, column=1, padx=8)
+        ttk.Label(body, text="입력 프로필").grid(row=10, column=0, sticky="w", pady=4)
         profile = ttk.Combobox(body, state="readonly", width=22, values=list(INPUT_PROFILES))
         profile.set(self.config.input_profile)
-        profile.grid(row=9, column=1, padx=8)
-        ttk.Label(body, text="사용자 키 (위/아래/왼쪽/오른쪽/선택/뒤로)").grid(row=10, column=0, columnspan=2, sticky="w", pady=(8, 2))
+        profile.grid(row=10, column=1, padx=8)
+        ttk.Label(body, text="사용자 키 (위/아래/왼쪽/오른쪽/선택/뒤로)").grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 2))
         key_vars: dict[str, tk.StringVar] = {}
-        for row, key in enumerate(("up", "down", "left", "right", "select", "back"), start=11):
+        for row, key in enumerate(("up", "down", "left", "right", "select", "back"), start=12):
             ttk.Label(body, text=key).grid(row=row, column=0, sticky="w", pady=1)
             value = tk.StringVar(value=self.config.custom_keys[key])
             key_vars[key] = value
@@ -396,6 +418,10 @@ class HelperApp:
             self.config.auto_update_enabled = auto_update_var.get()
             self.config.diagnostic_upload_enabled = diagnostic_upload_var.get()
             try:
+                self.config.guide_font_size = max(8, min(24, int(font_size_var.get())))
+            except (tk.TclError, ValueError):
+                self.config.guide_font_size = 11
+            try:
                 self.config.diagnostic_capture_max_mb = max(100, min(10240, int(diagnostic_max_var.get())))
             except (tk.TclError, ValueError):
                 self.config.diagnostic_capture_max_mb = 1024
@@ -403,12 +429,13 @@ class HelperApp:
             self.config.input_profile = profile.get()
             self.config.custom_keys = {key: value.get().strip() or self.config.custom_keys[key] for key, value in key_vars.items()}
             self._apply_mode()
+            self._apply_font_size()
             self._refresh_controls()
             self.config.save(self.config_path)
             dialog.destroy()
             messagebox.showinfo("설정 저장", "설정을 저장했습니다. 일부 변경은 다음 실행부터 적용됩니다.")
 
-        ttk.Button(body, text="저장", command=save).grid(row=17, column=1, sticky="e", pady=(10, 0))
+        ttk.Button(body, text="저장", command=save).grid(row=18, column=1, sticky="e", pady=(10, 0))
 
     def _check_for_updates(self) -> None:
         try:

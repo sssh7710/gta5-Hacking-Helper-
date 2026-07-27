@@ -27,6 +27,7 @@ class AppConfig:
     overlay_width: int = 390
     overlay_height: int = 245
     overlay_opacity: float = 0.90
+    guide_font_size: int = 11
     voice_enabled: bool = False
     voice_rate: int = 165
     controls_legend_enabled: bool = False
@@ -55,6 +56,10 @@ class AppConfig:
         known = {key: raw[key] for key in cls.__dataclass_fields__ if key in raw}
         config = cls(**known)
         config.custom_keys = {**DEFAULT_KEYS, **config.custom_keys}
+        try:
+            config.guide_font_size = max(8, min(24, int(config.guide_font_size)))
+        except (TypeError, ValueError):
+            config.guide_font_size = 11
         return config
 
     def save(self, path: Path) -> None:
