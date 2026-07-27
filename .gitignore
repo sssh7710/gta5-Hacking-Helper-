@@ -10,6 +10,7 @@ Thumbs.db
 Desktop.ini
 config.json
 diagnostics/*
+updates/
 !diagnostics/.gitkeep
 assets/reference/*
 !assets/reference/.gitkeep
