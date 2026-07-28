@@ -131,9 +131,15 @@ class Scanner(threading.Thread):
                 except CaptureError as exc:
                     self.events.put(("status", str(exc)))
                 if self.diagnostic_event.is_set():
-                    path = self._capture.save_diagnostic(frame, self.config.diagnostic_dir, "gta")
-                    self.events.put(("status", f"진단 이미지 저장: {path.name}"))
-                    self.diagnostic_event.clear()
+                    try:
+                        session = self._capture.save_diagnostic(frame, self.config.diagnostic_dir, "gta")
+                    except CaptureError as exc:
+                        self.events.put(("status", str(exc)))
+                    else:
+                        self.events.put(("status", f"수동 진단 저장: {session.name}"))
+                        self.events.put(("diagnostic_completed", session))
+                    finally:
+                        self.diagnostic_event.clear()
                 self.events.put(("state", (AppState.ANALYZING, "해킹 화면 자동 감시 중")))
                 result = analyzer.update(frame)
                 if analyzer.dot.grid_visible:
@@ -413,7 +419,7 @@ class HelperApp:
         )
         update_channel.grid(row=5, column=1, padx=8)
         diagnostic_upload_var = tk.BooleanVar(value=self.config.diagnostic_upload_enabled)
-        upload_text = "인식 결과 자료 자동 전송 (성공/실패)" if self.reporter.configured else "인식 결과 자료 자동 전송 (서버 준비 전)"
+        upload_text = "진단 자료 자동 전송 (자동/수동)" if self.reporter.configured else "진단 자료 자동 전송 (서버 준비 전)"
         ttk.Checkbutton(body, text=upload_text, variable=diagnostic_upload_var).grid(row=6, column=0, columnspan=2, sticky="w", pady=4)
         ttk.Label(body, text="※ 전송 자료에는 GTA 게임 화면이 포함될 수 있습니다.", foreground="#9a6700").grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 4))
         ttk.Label(body, text="안내 글자 크기").grid(row=8, column=0, sticky="w", pady=4)

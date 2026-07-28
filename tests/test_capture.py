@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from gta_helper.capture import DiagnosticFrameRecorder, _pixel_standard_deviation
+from gta_helper.capture import DiagnosticFrameRecorder, DxCapture, _pixel_standard_deviation
 
 
 class DiagnosticFrameRecorderTests(unittest.TestCase):
@@ -86,6 +86,37 @@ class DiagnosticFrameRecorderTests(unittest.TestCase):
             self.assertEqual(removed, [oldest])
             self.assertFalse(oldest.exists())
             self.assertTrue(newer.exists())
+
+    def test_manual_diagnostic_is_saved_as_uploadable_session(self) -> None:
+        frame = np.random.default_rng(7710).integers(0, 256, (90, 160, 3), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as directory:
+            session = DxCapture.save_diagnostic(frame, directory, "gta")
+
+            self.assertEqual(session.parent.name, "manual")
+            self.assertEqual(len(list(session.glob("frame_*.jpg"))), 1)
+            metadata = json.loads((session / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["capture_trigger"], "manual")
+            self.assertEqual(metadata["frame_count"], 1)
+            self.assertEqual(metadata["answer_outcome"], "failure")
+
+    def test_manual_diagnostics_over_limit_are_reduced_to_half_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manual = root / "manual"
+            manual.mkdir()
+            sessions = []
+            for index in range(4):
+                session = manual / f"attempt_2026010{index + 1}_000000_000000_gta"
+                session.mkdir()
+                (session / "frame_0000_00000ms.jpg").write_bytes(bytes([index]) * 30)
+                sessions.append(session)
+
+            removed = DxCapture.prune_manual_diagnostics(root, max_total_bytes=100)
+
+            self.assertEqual(removed, sessions[:3])
+            self.assertFalse(any(session.exists() for session in sessions[:3]))
+            self.assertTrue(sessions[3].exists())
 
 
 if __name__ == "__main__":

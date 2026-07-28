@@ -6,7 +6,11 @@ import unittest
 import zipfile
 from pathlib import Path
 
+import numpy as np
+
+from gta_helper.capture import DxCapture
 from gta_helper.reporting import DiagnosticReporter, build_report_archive, is_unresolved_session, session_outcome
+from server.receiver import validate_report_archive
 
 
 class ReportingTests(unittest.TestCase):
@@ -41,6 +45,20 @@ class ReportingTests(unittest.TestCase):
                 self.assertTrue(reporter.submit(session))
             self.assertEqual(reporter._queue.qsize(), 2)
 
+    def test_reporter_queues_manual_session_for_automatic_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            (session / "session.json").write_text(
+                json.dumps({"capture_trigger": "manual", "answer_outcome": "failure"}),
+                encoding="utf-8",
+            )
+            reporter = DiagnosticReporter("https://example.invalid/v1/reports", 0.68)
+
+            self.assertTrue(reporter.submit(session))
+            queued_session, report_kind = reporter._queue.get_nowait()
+            self.assertEqual(queued_session, session)
+            self.assertEqual(report_kind, "manual")
+
     def test_report_contains_only_metadata_and_session_jpegs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -53,6 +71,17 @@ class ReportingTests(unittest.TestCase):
 
             with zipfile.ZipFile(archive) as report:
                 self.assertEqual(sorted(report.namelist()), ["frame_0000.jpg", "session.json"])
+
+    def test_manual_diagnostic_archive_passes_receiver_validation(self) -> None:
+        frame = np.random.default_rng(7710).integers(0, 256, (90, 160, 3), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session = DxCapture.save_diagnostic(frame, root, "gta")
+            archive = build_report_archive(session, root / "manual-report.zip")
+
+            metadata = validate_report_archive(archive.read_bytes())
+            self.assertEqual(metadata["capture_trigger"], "manual")
 
 
 if __name__ == "__main__":

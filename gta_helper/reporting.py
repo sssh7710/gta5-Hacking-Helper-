@@ -109,7 +109,13 @@ class DiagnosticReporter(threading.Thread):
         outcome = session_outcome(session_dir, self.confidence_threshold)
         if outcome is None:
             return False
-        self._queue.put((Path(session_dir), outcome))
+        session = Path(session_dir)
+        try:
+            metadata = json.loads((session / "session.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            metadata = {}
+        report_kind = "manual" if metadata.get("capture_trigger") == "manual" else outcome
+        self._queue.put((session, report_kind))
         return True
 
     def stop(self) -> None:
@@ -120,11 +126,11 @@ class DiagnosticReporter(threading.Thread):
             item = self._queue.get()
             if item is None:
                 return
-            session, outcome = item
+            session, report_kind = item
             try:
                 report_id = upload_report(session, self.endpoint)
             except ReportError as exc:
                 self.notify(str(exc))
             else:
-                label = "성공" if outcome == "success" else "실패"
+                label = {"success": "성공", "failure": "실패", "manual": "수동"}[report_kind]
                 self.notify(f"인식 결과 자료 전송 완료 ({label}): {report_id[:8]}")

@@ -18,6 +18,10 @@ class CaptureError(RuntimeError):
     pass
 
 
+MANUAL_DIAGNOSTIC_MAX_BYTES = 50 * 1024 * 1024
+MANUAL_DIAGNOSTIC_RETAIN_RATIO = 0.5
+
+
 def _pixel_standard_deviation(frame: np.ndarray) -> float:
     """NumPy 임시 배열 없이 전체 픽셀의 표준편차를 계산한다."""
     _, standard_deviation = cv2.meanStdDev(frame.reshape(-1, 1))
@@ -255,9 +259,98 @@ class DxCapture:
 
     @staticmethod
     def save_diagnostic(frame: np.ndarray, directory: str | Path, label: str = "capture") -> Path:
-        path = Path(directory)
-        path.mkdir(parents=True, exist_ok=True)
-        filename = path / f"{label}_{datetime.now():%Y%m%d_%H%M%S_%f}.png"
-        if not cv2.imwrite(str(filename), frame):
-            raise CaptureError(f"진단 이미지를 저장하지 못했습니다: {filename}")
-        return filename
+        if frame.ndim != 3 or frame.shape[0] < 1 or frame.shape[1] < 1:
+            raise CaptureError("수동 진단에 사용할 화면이 올바르지 않습니다.")
+
+        root = Path(directory)
+        manual_dir = root / "manual"
+        manual_dir.mkdir(parents=True, exist_ok=True)
+        DxCapture.prune_manual_diagnostics(root)
+
+        safe_label = "".join(char if char.isalnum() or char in "-_" else "_" for char in label).strip("_") or "capture"
+        started = datetime.now()
+        session_dir = manual_dir / f"attempt_{started:%Y%m%d_%H%M%S_%f}_{safe_label}"
+        session_dir.mkdir(parents=True, exist_ok=False)
+        frame_path = session_dir / "frame_0000_00000ms.jpg"
+        metadata_path = session_dir / "session.json"
+        height, width = frame.shape[:2]
+        try:
+            ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        except cv2.error as exc:
+            shutil.rmtree(session_dir, ignore_errors=True)
+            raise CaptureError(f"수동 진단 사진을 변환하지 못했습니다: {frame_path}") from exc
+        if not ok:
+            shutil.rmtree(session_dir, ignore_errors=True)
+            raise CaptureError(f"수동 진단 사진을 변환하지 못했습니다: {frame_path}")
+        metadata = {
+            "label": f"manual_{label}",
+            "capture_trigger": "manual",
+            "started_at": started.isoformat(timespec="milliseconds"),
+            "completed_at": datetime.now().isoformat(timespec="milliseconds"),
+            "duration_seconds": 0.0,
+            "capture_fps": 1.0,
+            "image_format": "jpeg",
+            "jpeg_quality": 92,
+            "width": width,
+            "height": height,
+            "frame_count": 1,
+            "answer_outcome": "failure",
+            "answer_provided": False,
+        }
+        try:
+            frame_path.write_bytes(encoded.tobytes())
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as exc:
+            shutil.rmtree(session_dir, ignore_errors=True)
+            raise CaptureError(f"수동 진단 자료를 저장하지 못했습니다: {session_dir}") from exc
+
+        DxCapture.prune_manual_diagnostics(root, protected=session_dir)
+        return session_dir
+
+    @staticmethod
+    def prune_manual_diagnostics(
+        directory: str | Path,
+        max_total_bytes: int = MANUAL_DIAGNOSTIC_MAX_BYTES,
+        protected: Path | None = None,
+    ) -> list[Path]:
+        """수동 진단이 한도를 넘으면 오래된 자료부터 한도의 50%까지 정리한다."""
+        root = Path(directory)
+        if not root.exists():
+            return []
+        manual_dir = root / "manual"
+        entries = [
+            path for path in manual_dir.glob("attempt_*")
+            if path.is_dir()
+        ] if manual_dir.is_dir() else []
+        for pattern in ("gta_*.png", "gta_*.jpg", "gta_*.jpeg"):
+            entries.extend(path for path in root.glob(pattern) if path.is_file())
+        entries.sort(key=lambda path: (path.stat().st_mtime, path.name))
+        sizes = {
+            path: (
+                sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+                if path.is_dir() else path.stat().st_size
+            )
+            for path in entries
+        }
+        total = sum(sizes.values())
+        limit = max(1, int(max_total_bytes))
+        if total <= limit:
+            return []
+
+        target = max(1, int(limit * MANUAL_DIAGNOSTIC_RETAIN_RATIO))
+        removed: list[Path] = []
+        for entry in entries:
+            if total <= target:
+                break
+            if protected is not None and entry == protected:
+                continue
+            try:
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+            except OSError as exc:
+                raise CaptureError(f"오래된 수동 진단 자료를 정리하지 못했습니다: {entry}") from exc
+            total -= sizes[entry]
+            removed.append(entry)
+        return removed
