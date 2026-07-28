@@ -75,9 +75,18 @@ def enable_click_through(hwnd: int, enabled: bool) -> None:
 
 
 def exclude_from_capture(hwnd: int) -> bool:
-    # Windows 10 2004+: WDA_EXCLUDEFROMCAPTURE. 실패해도 분석 전 잠시 숨기는 방식으로 보완한다.
+    # Tk는 내부 자식 창의 HWND를 반환할 수 있으므로 실제 최상위 창에 적용한다.
+    GA_ROOT = 2
     WDA_EXCLUDEFROMCAPTURE = 0x11
     try:
-        return bool(ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
+        user32 = ctypes.windll.user32
+        target = hwnd
+        try:
+            root = user32.GetAncestor(hwnd, GA_ROOT)
+            if root:
+                target = int(root)
+        except (AttributeError, OSError):
+            pass
+        return bool(user32.SetWindowDisplayAffinity(target, WDA_EXCLUDEFROMCAPTURE))
     except (AttributeError, OSError):
         return False

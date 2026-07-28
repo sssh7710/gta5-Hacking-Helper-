@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from .models import PuzzleType, SolveResult
@@ -10,6 +11,23 @@ from .layout import casino_fingerprint_layout, cayo_layout
 from .solvers import CayoFingerprintSolver, DotMemorySolver, FragmentFingerprintSolver
 from .casino_reference import CasinoReferenceSolver
 from .casino import selected_component_indices
+
+
+ANALYSIS_MAX_HEIGHT = 1080
+KEYPAD_GUARD_FRAMES = 15
+
+
+def _analysis_frame(frame: np.ndarray) -> np.ndarray:
+    """고해상도 캡처는 비율을 유지해 분석 비용만 줄인다."""
+    height, width = frame.shape[:2]
+    if height <= ANALYSIS_MAX_HEIGHT:
+        return frame
+    scale = ANALYSIS_MAX_HEIGHT / height
+    return cv2.resize(
+        frame,
+        (max(1, round(width * scale)), ANALYSIS_MAX_HEIGHT),
+        interpolation=cv2.INTER_AREA,
+    )
 
 
 class PuzzleAnalyzer:
@@ -26,6 +44,7 @@ class PuzzleAnalyzer:
         self.casino_screen_visible = False
         self.casino_selection_visible = False
         self._fingerprint_verification_pending = False
+        self._keypad_guard_frames = 0
 
     def reset(self) -> None:
         self.dot.reset()
@@ -34,15 +53,22 @@ class PuzzleAnalyzer:
         self.casino_screen_visible = False
         self.casino_selection_visible = False
         self._fingerprint_verification_pending = False
+        self._keypad_guard_frames = 0
 
     def update(self, frame: np.ndarray) -> SolveResult | None:
+        frame = _analysis_frame(frame)
         # 지문 후보를 한 번 찾은 직후에는 점멸 퍼즐 전처리를 건너뛰고 다음
         # 프레임에서 곧바로 재확인한다. 평상시에는 점멸 퍼즐을 계속 우선한다.
         self._frame_number += 1
         self.casino_layout_checked = False
         fingerprint_active = self.casino_screen_visible or self._fingerprint_verification_pending
         result = None if fingerprint_active else self.dot.update(frame)
-        if result is None and (fingerprint_active or self._frame_number % 2 == 0):
+        if not fingerprint_active:
+            if self.dot.grid_visible:
+                self._keypad_guard_frames = KEYPAD_GUARD_FRAMES
+            elif self._keypad_guard_frames > 0:
+                self._keypad_guard_frames -= 1
+        if result is None and self._keypad_guard_frames == 0 and (fingerprint_active or self._frame_number % 2 == 0):
             self.casino_layout_checked = True
             fragments = casino_fingerprint_layout(frame)
             self.casino_screen_visible = fragments is not None

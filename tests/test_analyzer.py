@@ -11,6 +11,43 @@ from gta_helper.models import PuzzleType, SolveResult
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_high_resolution_frame_is_downscaled_for_analysis_only(self) -> None:
+        frame = np.zeros((1800, 2880, 3), dtype=np.uint8)
+        analyzer = PuzzleAnalyzer()
+        analyzer.dot.update = Mock(return_value=None)
+
+        analyzer.update(frame)
+
+        analyzed = analyzer.dot.update.call_args.args[0]
+        self.assertEqual(analyzed.shape, (1080, 1728, 3))
+        self.assertEqual(frame.shape, (1800, 2880, 3))
+
+    def test_recent_keypad_grid_is_not_treated_as_fingerprint(self) -> None:
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        analyzer = PuzzleAnalyzer()
+        updates = 0
+
+        def detect_keypad(_frame: np.ndarray) -> None:
+            nonlocal updates
+            updates += 1
+            analyzer.dot._grid_visible = updates == 1
+            return None
+
+        analyzer.dot.update = Mock(side_effect=detect_keypad)
+        analyzer._frame_number = 1
+
+        with (
+            patch("gta_helper.analyzer.casino_fingerprint_layout") as casino_layout,
+            patch("gta_helper.analyzer.cayo_layout") as cayo_layout,
+        ):
+            results = [analyzer.update(frame) for _ in range(3)]
+
+        self.assertTrue(all(result is None for result in results))
+        casino_layout.assert_not_called()
+        cayo_layout.assert_not_called()
+        self.assertFalse(analyzer.casino_layout_checked)
+        self.assertEqual(analyzer._keypad_guard_frames, 13)
+
     def test_generic_rectangles_do_not_trigger_fingerprint_answer(self) -> None:
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         for row in range(2):
