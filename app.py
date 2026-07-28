@@ -269,6 +269,7 @@ class HelperApp:
         self.mode_var = tk.StringVar(value=self.config.display_mode)
         self._fit_scheduled = False
         self._pending_update_archive: Path | None = None
+        self._update_check_in_progress = False
         self.voice = SpeechService(self.config.voice_enabled, self.config.voice_rate)
         self.reporter = DiagnosticReporter(
             self.config.diagnostic_upload_url if self.config.diagnostic_upload_enabled else "",
@@ -281,7 +282,7 @@ class HelperApp:
         self.reporter.start()
         self.scanner.start()
         if self.config.auto_update_enabled:
-            threading.Thread(target=self._check_for_updates, daemon=True, name="gta-helper-update-check").start()
+            self._start_update_check()
         self.root.after(100, self._drain_events)
 
     def _build_ui(self) -> None:
@@ -388,7 +389,13 @@ class HelperApp:
         diagnostic_capture_var = tk.BooleanVar(value=self.config.diagnostic_capture_enabled)
         ttk.Checkbutton(body, text="인식 개선 사진 자동 저장 (약 7초)", variable=diagnostic_capture_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
         auto_update_var = tk.BooleanVar(value=self.config.auto_update_enabled)
-        ttk.Checkbutton(body, text="새 버전 자동 확인", variable=auto_update_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="새 버전 자동 확인", variable=auto_update_var).grid(row=4, column=0, sticky="w", pady=4)
+        check_update_button = ttk.Button(
+            body,
+            text="지금 업데이트 확인",
+            command=lambda: self._start_update_check(manual=True, source_button=check_update_button),
+        )
+        check_update_button.grid(row=4, column=1, sticky="e", padx=8, pady=4)
         diagnostic_upload_var = tk.BooleanVar(value=self.config.diagnostic_upload_enabled)
         upload_text = "인식 결과 자료 자동 전송 (성공/실패)" if self.reporter.configured else "인식 결과 자료 자동 전송 (서버 준비 전)"
         ttk.Checkbutton(body, text=upload_text, variable=diagnostic_upload_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=4)
@@ -441,14 +448,35 @@ class HelperApp:
 
         ttk.Button(body, text="저장", command=save).grid(row=18, column=1, sticky="e", pady=(10, 0))
 
-    def _check_for_updates(self) -> None:
+    def _start_update_check(self, manual: bool = False, source_button: ttk.Button | None = None) -> None:
+        if self._update_check_in_progress:
+            if manual:
+                messagebox.showinfo("업데이트 확인", "이미 새 버전을 확인하고 있습니다.", parent=self._update_dialog_parent(source_button))
+            return
+        self._update_check_in_progress = True
+        if source_button is not None:
+            source_button.state(["disabled"])
+        if manual:
+            self.detail_var.set("새 버전 확인 중")
+        threading.Thread(
+            target=self._check_for_updates,
+            args=(manual, source_button),
+            daemon=True,
+            name="gta-helper-update-check",
+        ).start()
+
+    def _check_for_updates(self, manual: bool = False, source_button: ttk.Button | None = None) -> None:
         try:
             info = check_for_update(APP_VERSION)
         except UpdateError as exc:
-            self.events.put(("update_error", str(exc)))
-            return
-        if info is not None:
-            self.events.put(("update_available", info))
+            self.events.put(("update_check_error", (str(exc), manual, source_button)))
+        else:
+            if info is not None:
+                self.events.put(("update_available", (info, source_button)))
+            elif manual:
+                self.events.put(("update_current", source_button))
+        finally:
+            self.events.put(("update_check_finished", source_button))
 
     def _download_update(self, info: UpdateInfo) -> None:
         try:
@@ -458,11 +486,20 @@ class HelperApp:
         else:
             self.events.put(("update_downloaded", (info, archive)))
 
-    def _offer_update(self, info: UpdateInfo) -> None:
+    def _update_dialog_parent(self, source_button: ttk.Button | None) -> tk.Misc:
+        if source_button is not None:
+            try:
+                if source_button.winfo_exists():
+                    return source_button.winfo_toplevel()
+            except tk.TclError:
+                pass
+        return self.root
+
+    def _offer_update(self, info: UpdateInfo, source_button: ttk.Button | None = None) -> None:
         if not messagebox.askyesno(
             "새 버전 발견",
             f"{info.tag} 버전이 있습니다.\n지금 내려받아 업데이트할까요?\n\n설정과 진단 자료는 유지됩니다.",
-            parent=self.root,
+            parent=self._update_dialog_parent(source_button),
         ):
             return
         self.detail_var.set(f"{info.tag} 업데이트 다운로드 중")
@@ -518,7 +555,27 @@ class HelperApp:
                 if self.config.diagnostic_upload_enabled:
                     self.reporter.submit(payload)  # type: ignore[arg-type]
             elif kind == "update_available":
-                self._offer_update(payload)  # type: ignore[arg-type]
+                info, source_button = payload  # type: ignore[misc]
+                self._offer_update(info, source_button)
+            elif kind == "update_current":
+                messagebox.showinfo("업데이트 확인", f"현재 {APP_VERSION} 버전이 최신입니다.", parent=self._update_dialog_parent(payload))  # type: ignore[arg-type]
+                self.detail_var.set(f"현재 {APP_VERSION} 버전이 최신입니다.")
+                content_changed = True
+            elif kind == "update_check_error":
+                message, manual, source_button = payload  # type: ignore[misc]
+                self.detail_var.set(f"업데이트 확인 건너뜀: {message}")
+                if manual:
+                    messagebox.showerror("업데이트 확인 실패", str(message), parent=self._update_dialog_parent(source_button))
+                content_changed = True
+            elif kind == "update_check_finished":
+                self._update_check_in_progress = False
+                source_button = payload
+                if source_button is not None:
+                    try:
+                        if source_button.winfo_exists():
+                            source_button.state(["!disabled"])
+                    except tk.TclError:
+                        pass
             elif kind == "update_downloaded":
                 info, archive = payload  # type: ignore[misc]
                 self._pending_update_archive = archive
