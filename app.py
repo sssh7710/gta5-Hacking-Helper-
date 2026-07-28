@@ -96,6 +96,7 @@ class Scanner(threading.Thread):
             casino_rearm = False
             casino_missing_checks = 0
             while not self.stop_event.is_set():
+                scan_started_at = time.monotonic()
                 if self.reset_event.is_set():
                     analyzer.reset()
                     last_signature = None
@@ -233,7 +234,10 @@ class Scanner(threading.Thread):
                         result_debug=result.debug,
                     )
                     self.events.put(("result", result))
-                time.sleep(max(0.02, 1 / max(1, self.config.target_fps)))
+                frame_interval = 1 / max(1, self.config.target_fps)
+                remaining = frame_interval - (time.monotonic() - scan_started_at)
+                if remaining > 0:
+                    self.stop_event.wait(remaining)
         except Exception as exc:
             self.events.put(("state", (AppState.ERROR, f"스캐너 오류: {exc}")))
         finally:

@@ -40,12 +40,14 @@ class CasinoReferenceSolver:
     def solve(self, target: np.ndarray, candidates: list[np.ndarray]) -> SolveResult | None:
         if not self.profiles or len(candidates) != 8:
             return None
-        target_scores = [similarity(descriptor(target, (24, 36)), saved) for saved, _ in self.profiles]
+        target_descriptor = descriptor(target, (24, 36))
+        target_scores = [similarity(target_descriptor, saved) for saved, _ in self.profiles]
         best = int(np.argmax(target_scores))
         if target_scores[best] < .80 or (len(target_scores) > 1 and target_scores[best] - sorted(target_scores)[-2] < .15):
             return None
         pieces = self.profiles[best][1]
-        scores = [max(similarity(descriptor(candidate, (16, 16)), piece) for piece in pieces) for candidate in candidates]
+        candidate_descriptors = [descriptor(candidate, (16, 16)) for candidate in candidates]
+        scores = [max(similarity(candidate, piece) for piece in pieces) for candidate in candidate_descriptors]
         order = sorted(range(8), key=lambda index: scores[index], reverse=True)
         if scores[order[3]] < .65 or scores[order[3]] - scores[order[4]] < .15:
             return None

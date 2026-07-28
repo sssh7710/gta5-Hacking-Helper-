@@ -7,10 +7,21 @@ from pathlib import Path
 
 import numpy as np
 
-from gta_helper.capture import DiagnosticFrameRecorder
+from gta_helper.capture import DiagnosticFrameRecorder, _pixel_standard_deviation
 
 
 class DiagnosticFrameRecorderTests(unittest.TestCase):
+    def test_fast_pixel_standard_deviation_matches_numpy(self) -> None:
+        frames = [
+            np.zeros((90, 160, 3), dtype=np.uint8),
+            np.full((90, 160, 3), (0, 0, 255), dtype=np.uint8),
+            np.random.default_rng(7710).integers(0, 256, (90, 160, 3), dtype=np.uint8),
+        ]
+
+        for frame in frames:
+            with self.subTest(standard_deviation=float(frame.std())):
+                self.assertAlmostEqual(_pixel_standard_deviation(frame), float(frame.std()), places=10)
+
     def test_stores_seven_second_attempt_as_photos_and_metadata(self) -> None:
         now = [100.0]
         frame = np.zeros((90, 160, 3), dtype=np.uint8)

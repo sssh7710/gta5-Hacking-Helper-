@@ -238,7 +238,7 @@ class SolverTests(unittest.TestCase):
         candidates = [np.zeros((80, 80, 3), dtype=np.uint8) for _ in range(8)]
         measured_scores = iter((0.515, 0.726, 0.379, 0.388, 0.612, 0.311, 0.888, 0.335))
 
-        with patch("gta_helper.solvers._score_fingerprint_piece", side_effect=measured_scores):
+        with patch("gta_helper.solvers._score_prepared_fingerprint_piece", side_effect=measured_scores):
             result = FragmentFingerprintSolver().solve_regions(target, candidates)
 
         self.assertIsNotNone(result)
@@ -251,7 +251,7 @@ class SolverTests(unittest.TestCase):
         candidates = [np.zeros((80, 80, 3), dtype=np.uint8) for _ in range(8)]
         measured_scores = iter((0.299, 0.391, 0.759, 0.363, 0.531, 0.785, 0.571, 0.329))
 
-        with patch("gta_helper.solvers._score_fingerprint_piece", side_effect=measured_scores):
+        with patch("gta_helper.solvers._score_prepared_fingerprint_piece", side_effect=measured_scores):
             result = FragmentFingerprintSolver().solve_regions(target, candidates)
 
         self.assertIsNotNone(result)
@@ -265,7 +265,7 @@ class SolverTests(unittest.TestCase):
         candidates = [np.zeros((80, 80, 3), dtype=np.uint8) for _ in range(8)]
         measured_scores = iter((0.499, 0.449, 0.282, 0.267, 0.290, 0.828, 0.920, 0.872))
 
-        with patch("gta_helper.solvers._score_fingerprint_piece", side_effect=measured_scores):
+        with patch("gta_helper.solvers._score_prepared_fingerprint_piece", side_effect=measured_scores):
             result = FragmentFingerprintSolver().solve_regions(target, candidates)
 
         self.assertIsNotNone(result)

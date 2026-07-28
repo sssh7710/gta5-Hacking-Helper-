@@ -6,6 +6,9 @@ import cv2
 import numpy as np
 
 
+_DILATION_KERNEL = np.ones((3, 3), np.uint8)
+
+
 @dataclass(frozen=True)
 class Box:
     x: int
@@ -23,7 +26,7 @@ class Box:
 def _boxes(frame: np.ndarray) -> list[Box]:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(cv2.GaussianBlur(gray, (3, 3), 0), 45, 130)
-    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+    edges = cv2.dilate(edges, _DILATION_KERNEL, iterations=1)
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     height, width = frame.shape[:2]
     answer: list[Box] = []

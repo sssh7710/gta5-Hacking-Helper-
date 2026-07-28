@@ -11,6 +11,10 @@ import numpy as np
 from .models import GridPoint, PuzzleType, SolveResult
 
 
+_FINGERPRINT_PROCESSING_SCALE = .65
+_FINGERPRINT_SCALES = tuple(float(scale) for scale in np.arange(.50, 1.71, .05))
+
+
 def _edge(image: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -30,19 +34,31 @@ def _score_template(target: np.ndarray, piece: np.ndarray) -> float:
     return float(cv2.minMaxLoc(cv2.matchTemplate(target_edge, piece_edge, cv2.TM_CCOEFF_NORMED))[1])
 
 
-def _score_fingerprint_piece(target: np.ndarray, piece: np.ndarray) -> float:
-    """후보 테두리를 제외하고 전체 지문 안에서 다중 크기로 조각을 찾는다."""
+def _prepare_fingerprint_target(target: np.ndarray) -> np.ndarray | None:
     target_gray = cv2.cvtColor(target, cv2.COLOR_BGR2GRAY) if target.ndim == 3 else target
+    if min(target_gray.shape) < 24:
+        return None
+    target_gray = cv2.threshold(target_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    return cv2.resize(
+        target_gray,
+        None,
+        fx=_FINGERPRINT_PROCESSING_SCALE,
+        fy=_FINGERPRINT_PROCESSING_SCALE,
+        interpolation=cv2.INTER_AREA,
+    )
+
+
+def _score_prepared_fingerprint_piece(target_gray: np.ndarray, piece: np.ndarray) -> float:
+    """전처리된 전체 지문 안에서 후보 조각을 다중 크기로 찾는다."""
     piece_gray = cv2.cvtColor(piece, cv2.COLOR_BGR2GRAY) if piece.ndim == 3 else piece
     height, width = piece_gray.shape
     margin_y, margin_x = round(height * .12), round(width * .12)
     piece_gray = piece_gray[margin_y:height - margin_y, margin_x:width - margin_x]
-    if min(target_gray.shape) < 24 or min(piece_gray.shape) < 12:
+    if min(piece_gray.shape) < 12:
         return -1.0
 
     # 카지노 UI의 점무늬 배경은 후보마다 위치가 달라 명암 상관계수에
     # 잘못 기여한다. 밝은 지문선만 이진화해 실제 선 모양을 비교한다.
-    target_gray = cv2.threshold(target_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
     piece_gray = cv2.threshold(piece_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
     if cv2.countNonZero(piece_gray) < max(12, piece_gray.size * .006):
         return -1.0
@@ -50,20 +66,20 @@ def _score_fingerprint_piece(target: np.ndarray, piece: np.ndarray) -> float:
     # 1920x1080 실전 캡처에서는 원본 크기 그대로 다중 크기 비교를 하면
     # 후보 8개 판정에 약 0.5~0.9초가 걸린다. 지문선 모양과 기존 임계값을
     # 유지하는 범위에서 비교 영상만 축소해 matchTemplate 연산량을 줄인다.
-    processing_scale = .65
-    target_gray = cv2.resize(
-        target_gray, None, fx=processing_scale, fy=processing_scale, interpolation=cv2.INTER_AREA
-    )
     piece_gray = cv2.resize(
-        piece_gray, None, fx=processing_scale, fy=processing_scale, interpolation=cv2.INTER_AREA
+        piece_gray,
+        None,
+        fx=_FINGERPRINT_PROCESSING_SCALE,
+        fy=_FINGERPRINT_PROCESSING_SCALE,
+        interpolation=cv2.INTER_AREA,
     )
     best = -1.0
-    for scale in np.arange(.50, 1.71, .05):
+    for scale in _FINGERPRINT_SCALES:
         resized = cv2.resize(
             piece_gray,
             None,
-            fx=float(scale),
-            fy=float(scale),
+            fx=scale,
+            fy=scale,
             interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC,
         )
         if resized.shape[0] >= target_gray.shape[0] or resized.shape[1] >= target_gray.shape[1]:
@@ -71,6 +87,14 @@ def _score_fingerprint_piece(target: np.ndarray, piece: np.ndarray) -> float:
         score = float(cv2.minMaxLoc(cv2.matchTemplate(target_gray, resized, cv2.TM_CCOEFF_NORMED))[1])
         best = max(best, score)
     return best
+
+
+def _score_fingerprint_piece(target: np.ndarray, piece: np.ndarray) -> float:
+    """후보 테두리를 제외하고 전체 지문 안에서 다중 크기로 조각을 찾는다."""
+    prepared_target = _prepare_fingerprint_target(target)
+    if prepared_target is None:
+        return -1.0
+    return _score_prepared_fingerprint_piece(prepared_target, piece)
 
 
 class DotMemorySolver:
@@ -153,13 +177,14 @@ class DotMemorySolver:
         self._red_input_visible = False
         self.current_pattern = ()
         self.current_grid_shape = (0, 0)
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         # 점멸 키패드는 6×5 또는 5×4 격자다. 켜진 점만으로
         # 행/열을 만들면 순간 색상과 UI 글자를 좌표로 오인하므로 모든 원의
         # 테두리를 먼저 찾고, 완전한 격자일 때만 판정한다.
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         height, width = frame.shape[:2]
-        scan = gray[:round(height * .86), :round(width * .70)]
+        scan = cv2.cvtColor(
+            frame[:round(height * .86), :round(width * .70)],
+            cv2.COLOR_BGR2GRAY,
+        )
         circles = cv2.HoughCircles(cv2.medianBlur(scan, 5), cv2.HOUGH_GRADIENT, 1.2, max(34, frame.shape[0] // 15), param1=80, param2=25, minRadius=max(10, frame.shape[0] // 38), maxRadius=max(16, frame.shape[0] // 13))
         if circles is None:
             return None
@@ -199,18 +224,19 @@ class DotMemorySolver:
 
         # 점은 청록색으로 켜진 뒤 빨간 표시로 남을 수 있다. 두 색을 모두 읽되,
         # 흰색 선택 테두리와 어두운 격자 무늬는 제외한다.
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         cyan = cv2.inRange(hsv, (70, 80, 70), (135, 255, 255))
         red = cv2.bitwise_or(cv2.inRange(hsv, (0, 90, 80), (15, 255, 255)), cv2.inRange(hsv, (165, 90, 80), (179, 255, 255)))
         values: list[tuple[GridPoint, float, float]] = []
         sample_radius = max(6, round(median_radius * .48))
+        yy, xx = np.ogrid[-sample_radius:sample_radius + 1, -sample_radius:sample_radius + 1]
+        disk = xx ** 2 + yy ** 2 <= sample_radius ** 2
         for row, y in enumerate(ys, start=1):
             for column, x in enumerate(xs, start=1):
                 top, bottom = max(0, y - sample_radius), min(height, y + sample_radius + 1)
                 left, right = max(0, x - sample_radius), min(width, x + sample_radius + 1)
                 cyan_patch = cyan[top:bottom, left:right]
                 red_patch = red[top:bottom, left:right]
-                yy, xx = np.ogrid[:cyan_patch.shape[0], :cyan_patch.shape[1]]
-                disk = (xx - (x - left)) ** 2 + (yy - (y - top)) ** 2 <= sample_radius ** 2
                 cyan_coverage = float(np.mean(cyan_patch[disk])) / 255.0
                 red_coverage = float(np.mean(red_patch[disk])) / 255.0
                 values.append((GridPoint(row, column), cyan_coverage, red_coverage))
@@ -293,7 +319,13 @@ class DotMemorySolver:
 
 class FragmentFingerprintSolver:
     def solve_regions(self, target: np.ndarray, candidates: Iterable[np.ndarray]) -> SolveResult | None:
-        scored = [(index + 1, _score_fingerprint_piece(target, candidate)) for index, candidate in enumerate(candidates)]
+        prepared_target = _prepare_fingerprint_target(target)
+        if prepared_target is None:
+            return None
+        scored = [
+            (index + 1, _score_prepared_fingerprint_piece(prepared_target, candidate))
+            for index, candidate in enumerate(candidates)
+        ]
         if len(scored) < 4:
             return None
         scored.sort(key=lambda item: item[1], reverse=True)

@@ -18,6 +18,12 @@ class CaptureError(RuntimeError):
     pass
 
 
+def _pixel_standard_deviation(frame: np.ndarray) -> float:
+    """NumPy 임시 배열 없이 전체 픽셀의 표준편차를 계산한다."""
+    _, standard_deviation = cv2.meanStdDev(frame.reshape(-1, 1))
+    return float(standard_deviation[0, 0])
+
+
 class DiagnosticFrameRecorder:
     """해킹 시도별 프레임과 판정 정보를 폴더 단위로 저장한다."""
 
@@ -234,7 +240,7 @@ class DxCapture:
             raise CaptureError("새 화면 프레임을 가져오지 못했습니다.")
         if frame.ndim != 3:
             raise CaptureError("지원하지 않는 캡처 프레임 형식입니다.")
-        if float(frame.std()) < 1.0:
+        if _pixel_standard_deviation(frame) < 1.0:
             raise CaptureError("검은 화면이 캡처되었습니다. 설정에서 WinRT를 선택해 보세요.")
         if game is None:
             return frame
