@@ -218,7 +218,10 @@ class DotMemorySolver:
                 grids.append((occupancy, candidate_xs, candidate_ys))
         if not grids:
             return None
-        regularity, xs, ys = max(grids, key=lambda item: (item[0], len(item[1]) * len(item[2])))
+        # A partly obscured 6x5 grid can leave a perfect 5x4 inner subset.
+        # Prefer the larger valid grid so that subset is not reported as a
+        # shifted normal-mode answer.
+        regularity, xs, ys = max(grids, key=lambda item: (len(item[1]) * len(item[2]), item[0]))
         self._grid_visible = True
         self.current_grid_shape = (len(ys), len(xs))
 

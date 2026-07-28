@@ -61,6 +61,25 @@ class SolverTests(unittest.TestCase):
         self.assertNotIn("위에서", display)
         self.assertNotIn("번째 줄", display)
 
+    def test_dot_solver_does_not_treat_partial_six_by_five_grid_as_five_by_four(self) -> None:
+        solver = DotMemorySolver(repeats_needed=2)
+        pattern = {(4, 0), (1, 1), (2, 2), (3, 3), (4, 4), (1, 5)}
+        frame = dot_frame(pattern)
+        cv2.circle(frame, (320, 130), 30, (0, 0, 0), -1)
+
+        self.assertIsNone(solver.update(frame))
+        self.assertTrue(solver.grid_visible)
+        self.assertEqual(solver.current_grid_shape, (5, 6))
+        solver.update(dot_frame(set()))
+        result = solver.update(frame)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            [(point.row, point.column) for point in result.locations],
+            [(2, 2), (2, 6), (3, 3), (4, 4), (5, 1), (5, 5)],
+        )
+
     def test_dot_solver_waits_for_repeated_final_pattern(self) -> None:
         solver = DotMemorySolver()
         first = {(0, 3), (2, 0), (2, 2), (2, 4), (3, 1), (3, 5)}
