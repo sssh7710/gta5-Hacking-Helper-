@@ -53,6 +53,8 @@ INPUT_PROFILES = {
     "Xbox": {"up": "D-pad ↑", "down": "D-pad ↓", "left": "D-pad ←", "right": "D-pad →", "select": "A", "back": "B"},
     "PlayStation": {"up": "D-pad ↑", "down": "D-pad ↓", "left": "D-pad ←", "right": "D-pad →", "select": "✕", "back": "○"},
 }
+UPDATE_CHANNEL_LABELS = {"릴리즈": "release", "베타": "beta"}
+UPDATE_CHANNEL_NAMES = {value: label for label, value in UPDATE_CHANNEL_LABELS.items()}
 
 
 class Scanner(threading.Thread):
@@ -390,33 +392,47 @@ class HelperApp:
         ttk.Checkbutton(body, text="인식 개선 사진 자동 저장 (약 7초)", variable=diagnostic_capture_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
         auto_update_var = tk.BooleanVar(value=self.config.auto_update_enabled)
         ttk.Checkbutton(body, text="새 버전 자동 확인", variable=auto_update_var).grid(row=4, column=0, sticky="w", pady=4)
+        update_channel_var = tk.StringVar(value=UPDATE_CHANNEL_NAMES.get(self.config.update_channel, "베타"))
         check_update_button = ttk.Button(
             body,
             text="지금 업데이트 확인",
-            command=lambda: self._start_update_check(manual=True, source_button=check_update_button),
+            command=lambda: self._start_update_check(
+                manual=True,
+                source_button=check_update_button,
+                channel=UPDATE_CHANNEL_LABELS.get(update_channel_var.get(), "beta"),
+            ),
         )
         check_update_button.grid(row=4, column=1, sticky="e", padx=8, pady=4)
+        ttk.Label(body, text="업데이트 채널").grid(row=5, column=0, sticky="w", pady=4)
+        update_channel = ttk.Combobox(
+            body,
+            textvariable=update_channel_var,
+            state="readonly",
+            width=22,
+            values=list(UPDATE_CHANNEL_LABELS),
+        )
+        update_channel.grid(row=5, column=1, padx=8)
         diagnostic_upload_var = tk.BooleanVar(value=self.config.diagnostic_upload_enabled)
         upload_text = "인식 결과 자료 자동 전송 (성공/실패)" if self.reporter.configured else "인식 결과 자료 자동 전송 (서버 준비 전)"
-        ttk.Checkbutton(body, text=upload_text, variable=diagnostic_upload_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Label(body, text="※ 전송 자료에는 GTA 게임 화면이 포함될 수 있습니다.", foreground="#9a6700").grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        ttk.Label(body, text="안내 글자 크기").grid(row=7, column=0, sticky="w", pady=4)
+        ttk.Checkbutton(body, text=upload_text, variable=diagnostic_upload_var).grid(row=6, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Label(body, text="※ 전송 자료에는 GTA 게임 화면이 포함될 수 있습니다.", foreground="#9a6700").grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Label(body, text="안내 글자 크기").grid(row=8, column=0, sticky="w", pady=4)
         font_size_var = tk.IntVar(value=self.config.guide_font_size)
-        ttk.Spinbox(body, from_=8, to=24, increment=1, textvariable=font_size_var, width=20).grid(row=7, column=1, padx=8)
-        ttk.Label(body, text="인식 자료 최대 용량 (MB)").grid(row=8, column=0, sticky="w", pady=4)
+        ttk.Spinbox(body, from_=8, to=24, increment=1, textvariable=font_size_var, width=20).grid(row=8, column=1, padx=8)
+        ttk.Label(body, text="인식 자료 최대 용량 (MB)").grid(row=9, column=0, sticky="w", pady=4)
         diagnostic_max_var = tk.IntVar(value=self.config.diagnostic_capture_max_mb)
-        ttk.Spinbox(body, from_=100, to=10240, increment=100, textvariable=diagnostic_max_var, width=20).grid(row=8, column=1, padx=8)
-        ttk.Label(body, text="캡처 백엔드").grid(row=9, column=0, sticky="w", pady=4)
+        ttk.Spinbox(body, from_=100, to=10240, increment=100, textvariable=diagnostic_max_var, width=20).grid(row=9, column=1, padx=8)
+        ttk.Label(body, text="캡처 백엔드").grid(row=10, column=0, sticky="w", pady=4)
         backend = ttk.Combobox(body, state="readonly", width=22, values=["auto", "dxgi", "winrt"])
         backend.set(self.config.capture_backend)
-        backend.grid(row=9, column=1, padx=8)
-        ttk.Label(body, text="입력 프로필").grid(row=10, column=0, sticky="w", pady=4)
+        backend.grid(row=10, column=1, padx=8)
+        ttk.Label(body, text="입력 프로필").grid(row=11, column=0, sticky="w", pady=4)
         profile = ttk.Combobox(body, state="readonly", width=22, values=list(INPUT_PROFILES))
         profile.set(self.config.input_profile)
-        profile.grid(row=10, column=1, padx=8)
-        ttk.Label(body, text="사용자 키 (위/아래/왼쪽/오른쪽/선택/뒤로)").grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 2))
+        profile.grid(row=11, column=1, padx=8)
+        ttk.Label(body, text="사용자 키 (위/아래/왼쪽/오른쪽/선택/뒤로)").grid(row=12, column=0, columnspan=2, sticky="w", pady=(8, 2))
         key_vars: dict[str, tk.StringVar] = {}
-        for row, key in enumerate(("up", "down", "left", "right", "select", "back"), start=12):
+        for row, key in enumerate(("up", "down", "left", "right", "select", "back"), start=13):
             ttk.Label(body, text=key).grid(row=row, column=0, sticky="w", pady=1)
             value = tk.StringVar(value=self.config.custom_keys[key])
             key_vars[key] = value
@@ -427,6 +443,7 @@ class HelperApp:
             self.config.controls_legend_enabled = controls_legend_var.get()
             self.config.diagnostic_capture_enabled = diagnostic_capture_var.get()
             self.config.auto_update_enabled = auto_update_var.get()
+            self.config.update_channel = UPDATE_CHANNEL_LABELS.get(update_channel_var.get(), "beta")
             self.config.diagnostic_upload_enabled = diagnostic_upload_var.get()
             try:
                 self.config.guide_font_size = max(8, min(24, int(font_size_var.get())))
@@ -446,9 +463,14 @@ class HelperApp:
             dialog.destroy()
             messagebox.showinfo("설정 저장", "설정을 저장했습니다. 일부 변경은 다음 실행부터 적용됩니다.")
 
-        ttk.Button(body, text="저장", command=save).grid(row=18, column=1, sticky="e", pady=(10, 0))
+        ttk.Button(body, text="저장", command=save).grid(row=19, column=1, sticky="e", pady=(10, 0))
 
-    def _start_update_check(self, manual: bool = False, source_button: ttk.Button | None = None) -> None:
+    def _start_update_check(
+        self,
+        manual: bool = False,
+        source_button: ttk.Button | None = None,
+        channel: str | None = None,
+    ) -> None:
         if self._update_check_in_progress:
             if manual:
                 messagebox.showinfo("업데이트 확인", "이미 새 버전을 확인하고 있습니다.", parent=self._update_dialog_parent(source_button))
@@ -460,14 +482,19 @@ class HelperApp:
             self.detail_var.set("새 버전 확인 중")
         threading.Thread(
             target=self._check_for_updates,
-            args=(manual, source_button),
+            args=(manual, source_button, channel or self.config.update_channel),
             daemon=True,
             name="gta-helper-update-check",
         ).start()
 
-    def _check_for_updates(self, manual: bool = False, source_button: ttk.Button | None = None) -> None:
+    def _check_for_updates(
+        self,
+        manual: bool = False,
+        source_button: ttk.Button | None = None,
+        channel: str | None = None,
+    ) -> None:
         try:
-            info = check_for_update(APP_VERSION)
+            info = check_for_update(APP_VERSION, channel or self.config.update_channel)
         except UpdateError as exc:
             self.events.put(("update_check_error", (str(exc), manual, source_button)))
         else:

@@ -18,6 +18,7 @@ USER_AGENT = "gta-hacking-helper-updater"
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 300 * 1024 * 1024
 PROTECTED_ROOT_NAMES = {".git", ".venv", "config.json", "diagnostics", "updates"}
+UPDATE_CHANNELS = {"release", "beta"}
 
 
 class UpdateError(RuntimeError):
@@ -47,7 +48,9 @@ def version_key(value: str) -> tuple[int, int, int, int, int]:
     return major, minor, patch, {"dev": 0, "alpha": 1, "beta": 2, "rc": 3, "final": 4}[stage], stage_number
 
 
-def select_update(releases: list[dict[str, Any]], current_version: str) -> UpdateInfo | None:
+def select_update(releases: list[dict[str, Any]], current_version: str, channel: str = "beta") -> UpdateInfo | None:
+    if channel not in UPDATE_CHANNELS:
+        raise ValueError(f"지원하지 않는 업데이트 채널입니다: {channel}")
     current_key = version_key(current_version)
     candidates: list[tuple[tuple[int, int, int, int, int], UpdateInfo]] = []
     for release in releases:
@@ -57,6 +60,8 @@ def select_update(releases: list[dict[str, Any]], current_version: str) -> Updat
         try:
             key = version_key(tag)
         except ValueError:
+            continue
+        if channel == "release" and (release.get("prerelease") or key[3] != 4):
             continue
         if key <= current_key:
             continue
@@ -96,14 +101,14 @@ def _request_bytes(url: str, max_bytes: int) -> bytes:
     return data
 
 
-def check_for_update(current_version: str) -> UpdateInfo | None:
+def check_for_update(current_version: str, channel: str = "beta") -> UpdateInfo | None:
     try:
         releases = json.loads(_request_bytes(RELEASES_URL, 2 * 1024 * 1024).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise UpdateError("GitHub 릴리스 응답을 읽지 못했습니다.") from exc
     if not isinstance(releases, list):
         raise UpdateError("GitHub 릴리스 응답 형식이 올바르지 않습니다.")
-    return select_update(releases, current_version)
+    return select_update(releases, current_version, channel)
 
 
 def download_update(info: UpdateInfo, directory: str | Path) -> Path:

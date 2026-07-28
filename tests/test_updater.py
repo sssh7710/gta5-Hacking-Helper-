@@ -36,6 +36,28 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(selected.tag, "v1.0.0-beta.10")
         self.assertEqual(selected.archive_url, "https://example.test/update.zip")
 
+    def test_release_channel_excludes_beta_versions(self) -> None:
+        def release(tag: str, prerelease: bool) -> dict[str, object]:
+            return {
+                "tag_name": tag,
+                "prerelease": prerelease,
+                "assets": [
+                    {"name": f"helper-{tag}-full-files.zip", "browser_download_url": f"https://example.test/{tag}.zip"},
+                    {"name": f"helper-{tag}-full-files.zip.sha256", "browser_download_url": f"https://example.test/{tag}.sha256"},
+                ],
+            }
+
+        releases = [release("v1.1.0-beta.1", True), release("v1.0.1", False)]
+
+        stable = select_update(releases, "1.0.0", channel="release")
+        beta = select_update(releases, "1.0.0", channel="beta")
+
+        self.assertIsNotNone(stable)
+        self.assertIsNotNone(beta)
+        assert stable is not None and beta is not None
+        self.assertEqual(stable.tag, "v1.0.1")
+        self.assertEqual(beta.tag, "v1.1.0-beta.1")
+
     def test_rejects_archive_path_traversal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
