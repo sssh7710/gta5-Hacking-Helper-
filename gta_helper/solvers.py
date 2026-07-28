@@ -100,11 +100,16 @@ def _score_fingerprint_piece(target: np.ndarray, piece: np.ndarray) -> float:
 class DotMemorySolver:
     """점멸 패턴을 프레임 전환 단위로 모아 마지막 반복 패턴을 확정한다."""
 
-    def __init__(self, repeats_needed: int = 2) -> None:
+    def __init__(self, repeats_needed: int = 2, final_blank_frames: int = 6) -> None:
         self.repeats_needed = repeats_needed
+        self.final_blank_frames = max(1, int(final_blank_frames))
         self._previous: tuple[GridPoint, ...] | None = None
         self._counts: Counter[tuple[GridPoint, ...]] = Counter()
         self._last_result: tuple[GridPoint, ...] | None = None
+        self._pending_pattern: tuple[GridPoint, ...] | None = None
+        self._pending_regularity = 0.0
+        self._pending_grid_shape = (0, 0)
+        self._blank_frames_after_pattern = 0
         self._grid_visible = False
         self._red_input_visible = False
         self._missing_grid_frames = 0
@@ -117,6 +122,10 @@ class DotMemorySolver:
         self._previous = None
         self._counts.clear()
         self._last_result = None
+        self._pending_pattern = None
+        self._pending_regularity = 0.0
+        self._pending_grid_shape = (0, 0)
+        self._blank_frames_after_pattern = 0
         self._grid_visible = False
         self._red_input_visible = False
         self._missing_grid_frames = 0
@@ -273,9 +282,20 @@ class DotMemorySolver:
             if self._grid_visible:
                 self._missing_grid_frames = 0
                 if self._red_input_visible:
+                    fallback = self._fallback_result("input_visible")
+                    if fallback is not None:
+                        return fallback
                     self._counts.clear()
                     self._last_result = None
+                    self._pending_pattern = None
+                    self._blank_frames_after_pattern = 0
                     self._inactive_grid_frames = 0
+                elif self._pending_pattern is not None:
+                    self._blank_frames_after_pattern += 1
+                    if self._blank_frames_after_pattern >= self.final_blank_frames:
+                        fallback = self._fallback_result("animation_end")
+                        if fallback is not None:
+                            return fallback
                 elif self._last_result is not None:
                     self._inactive_grid_frames += 1
                     if self._inactive_grid_frames >= 15:
@@ -291,6 +311,10 @@ class DotMemorySolver:
         self._missing_grid_frames = 0
         self._inactive_grid_frames = 0
         pattern, regularity = detected
+        self._pending_pattern = pattern
+        self._pending_regularity = regularity
+        self._pending_grid_shape = self.current_grid_shape
+        self._blank_frames_after_pattern = 0
         if self._last_result is not None and pattern != self._last_result:
             # 실전 코르츠 센터 습격 화면은 숫자를 입력해도 격자가 사라지거나 빨간 점으로 바뀌지 않는다.
             # 이전 정답과 다른 완성 배열이 보이면 다음 판이 시작된 것으로 간주한다.
@@ -304,20 +328,45 @@ class DotMemorySolver:
         count = self._counts[pattern]
         can_emit = pattern != self._last_result or self._different_pattern_seen
         if count >= self.repeats_needed and can_emit:
-            self._last_result = pattern
-            # 다음 판의 중간 배열이 이전 판에서 얻은 횟수를 재사용하지 않게 판별 이력을 분리한다.
-            self._counts.clear()
-            self._different_pattern_seen = False
             confidence = min(0.98, 0.58 + 0.10 * count + 0.12 * regularity)
-            return SolveResult(
-                puzzle=PuzzleType.DOT_MEMORY,
-                confidence=confidence,
-                summary="점멸 원 정답 위치",
-                locations=list(pattern),
-                details=["1번 신호부터 순서대로 표시된 세로 칸을 선택하세요."],
-                debug={"repeats": count, "grid_rows": self.current_grid_shape[0], "grid_columns": self.current_grid_shape[1]},
-            )
+            return self._result(pattern, confidence, {"repeats": count, "completion": "repeated"})
         return None
+
+    def _fallback_result(self, completion: str) -> SolveResult | None:
+        pattern = self._pending_pattern
+        unique_patterns = len(self._counts)
+        if pattern is None or unique_patterns < 3:
+            return None
+        if pattern == self._last_result and not self._different_pattern_seen:
+            return None
+        confidence = min(0.84, 0.56 + 0.04 * min(unique_patterns, 4) + 0.08 * self._pending_regularity)
+        return self._result(
+            pattern,
+            confidence,
+            {"repeats": self._counts[pattern], "completion": completion, "unique_patterns": unique_patterns},
+        )
+
+    def _result(
+        self,
+        pattern: tuple[GridPoint, ...],
+        confidence: float,
+        debug: dict[str, object],
+    ) -> SolveResult:
+        rows, columns = self._pending_grid_shape
+        self._last_result = pattern
+        # 다음 판의 중간 배열이 이전 판에서 얻은 횟수를 재사용하지 않게 판별 이력을 분리한다.
+        self._counts.clear()
+        self._different_pattern_seen = False
+        self._pending_pattern = None
+        self._blank_frames_after_pattern = 0
+        return SolveResult(
+            puzzle=PuzzleType.DOT_MEMORY,
+            confidence=confidence,
+            summary="점멸 원 정답 위치",
+            locations=list(pattern),
+            details=["1번 신호부터 순서대로 표시된 세로 칸을 선택하세요."],
+            debug={**debug, "grid_rows": rows, "grid_columns": columns},
+        )
 
 
 class FragmentFingerprintSolver:

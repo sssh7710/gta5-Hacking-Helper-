@@ -70,6 +70,31 @@ class DiagnosticFrameRecorderTests(unittest.TestCase):
             self.assertEqual(metadata["answer_outcome"], "failure")
             self.assertFalse(metadata["answer_provided"])
 
+    def test_result_from_another_puzzle_does_not_overwrite_active_session(self) -> None:
+        frame = np.zeros((90, 160, 3), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = DiagnosticFrameRecorder(directory)
+            recorder.start(frame, "cayo_fingerprint", {"puzzle": "CAYO_FINGERPRINT"})
+            self.assertTrue(recorder.annotate(
+                expected_puzzle="CAYO_FINGERPRINT",
+                result_summary="카요 정답",
+                result_confidence=0.72,
+            ))
+            self.assertFalse(recorder.annotate(
+                expected_puzzle="DOT_MEMORY",
+                result_summary="점멸 원 정답 위치",
+                result_confidence=0.90,
+            ))
+            completed = recorder.finish()
+
+            self.assertIsNotNone(completed)
+            assert completed is not None
+            metadata = json.loads((completed / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["puzzle"], "CAYO_FINGERPRINT")
+            self.assertEqual(metadata["result_summary"], "카요 정답")
+            self.assertAlmostEqual(metadata["result_confidence"], 0.72)
+
     def test_prunes_oldest_attempt_folder_when_total_limit_is_exceeded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

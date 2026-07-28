@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
 
-from gta_helper.layout import casino_fingerprint_layout
+from gta_helper.layout import Box, casino_fingerprint_layout, cayo_layout
 from gta_helper.casino import selected_component_indices
 from gta_helper.casino_reference import CasinoReferenceSolver
 
@@ -26,6 +27,21 @@ def casino_screen(width: int, height: int, *, include_target_inner: bool = True)
 
 
 class CasinoLayoutTests(unittest.TestCase):
+    def test_cayo_layout_requires_eight_vertical_rows(self) -> None:
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        target = Box(700, 80, 300, 500)
+        five_rows = [Box(200, 100 + row * 80, 180, 50) for row in range(5)]
+        eight_rows = [Box(200, 60 + row * 70, 180, 50) for row in range(8)]
+
+        with patch("gta_helper.layout._boxes", return_value=[target, *five_rows]):
+            self.assertIsNone(cayo_layout(frame))
+        with patch("gta_helper.layout._boxes", return_value=[target, *eight_rows]):
+            layout = cayo_layout(frame)
+
+        self.assertIsNotNone(layout)
+        assert layout is not None
+        self.assertEqual(len(layout[1]), 8)
+
     def test_relative_layout_finds_target_and_eight_components(self) -> None:
         for width, height in ((1280, 720), (1920, 1080), (2560, 1080), (3840, 2160)):
             with self.subTest(size=(width, height)):

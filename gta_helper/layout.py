@@ -127,7 +127,9 @@ def cayo_layout(frame: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]] | None
     for seed in wide:
         peers = [box for box in wide if .65 <= box.w / seed.w <= 1.35 and .55 <= box.h / seed.h <= 1.55]
         peers = sorted(peers, key=lambda item: item.y)
-        if not 5 <= len(peers) <= 12:
+        # 카요 지문은 세로 8개 조각으로 구성된다. 점멸 격자 화면의 5개
+        # 가로 패널을 지문 행으로 오인하지 않도록 정확한 행 수만 허용한다.
+        if len(peers) != 8:
             continue
         # 세로로 겹치지 않고 정렬된 줄만 채택한다.
         if any(peers[i + 1].y <= peers[i].y for i in range(len(peers) - 1)):

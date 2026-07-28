@@ -233,6 +233,7 @@ class Scanner(threading.Thread):
                         except CaptureError as exc:
                             self.events.put(("status", str(exc)))
                     recorder.annotate(
+                        expected_puzzle=result.puzzle.name,
                         result_summary=result.summary,
                         result_confidence=result.confidence,
                         result_locations=[

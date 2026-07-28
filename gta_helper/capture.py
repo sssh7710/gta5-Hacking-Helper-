@@ -116,9 +116,13 @@ class DiagnosticFrameRecorder:
         self._frame_number += 1
         self._next_frame_at = now + (1.0 / self.fps)
 
-    def annotate(self, **metadata: object) -> None:
-        if self._session_dir is not None:
-            self._metadata.update(metadata)
+    def annotate(self, *, expected_puzzle: str | None = None, **metadata: object) -> bool:
+        if self._session_dir is None:
+            return False
+        if expected_puzzle is not None and self._metadata.get("puzzle") != expected_puzzle:
+            return False
+        self._metadata.update(metadata)
+        return True
 
     @staticmethod
     def _json_default(value: object) -> object:

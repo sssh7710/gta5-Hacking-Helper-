@@ -97,6 +97,41 @@ class SolverTests(unittest.TestCase):
             [(1, 3), (1, 5), (3, 1), (3, 4), (3, 6), (4, 2)],
         )
 
+    def test_dot_solver_uses_last_complete_pattern_when_final_repeat_is_dropped(self) -> None:
+        solver = DotMemorySolver(final_blank_frames=6)
+        first = {(0, 0), (0, 5), (1, 1), (2, 2), (3, 3), (4, 4)}
+        middle = {(0, 4), (1, 0), (1, 2), (2, 5), (3, 1), (3, 3)}
+        final = {(0, 2), (1, 0), (1, 4), (2, 3), (3, 1), (3, 5)}
+
+        for pattern in (first, middle):
+            self.assertIsNone(solver.update(dot_frame(pattern)))
+            self.assertIsNone(solver.update(dot_frame(set())))
+        self.assertIsNone(solver.update(dot_frame(final)))
+        for _ in range(5):
+            self.assertIsNone(solver.update(dot_frame(set())))
+
+        result = solver.update(dot_frame(set()))
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            [(point.row, point.column) for point in result.locations],
+            [(1, 3), (2, 1), (2, 5), (3, 4), (4, 2), (4, 6)],
+        )
+        self.assertEqual(result.debug["completion"], "animation_end")
+        self.assertGreaterEqual(result.confidence, 0.68)
+
+    def test_dot_solver_does_not_fallback_after_only_two_patterns(self) -> None:
+        solver = DotMemorySolver(final_blank_frames=3)
+        first = {(0, 0), (0, 5), (1, 1), (2, 2), (3, 3), (4, 4)}
+        second = {(0, 4), (1, 0), (1, 2), (2, 5), (3, 1), (3, 3)}
+
+        for pattern in (first, second):
+            self.assertIsNone(solver.update(dot_frame(pattern)))
+            self.assertIsNone(solver.update(dot_frame(set())))
+        for _ in range(4):
+            self.assertIsNone(solver.update(dot_frame(set())))
+
     def test_dot_solver_confirms_repeated_pattern(self) -> None:
         solver = DotMemorySolver(repeats_needed=3)
         pattern = {(0, 1), (0, 5), (1, 3), (2, 4), (3, 2), (4, 0)}
