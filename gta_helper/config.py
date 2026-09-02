@@ -42,7 +42,7 @@ class AppConfig:
     auto_update_enabled: bool = True
     update_channel: str = "beta"
     diagnostic_upload_enabled: bool = True
-    diagnostic_upload_url: str = "https://gta-reports.217-142-244-125.sslip.io/v1/reports"
+    diagnostic_upload_url: str = "https://gta-reports.64-110-118-28.sslip.io/v1/reports"
     game_title_patterns: list[str] = field(default_factory=lambda: ["grand theft auto", "gta v"])
 
     @classmethod

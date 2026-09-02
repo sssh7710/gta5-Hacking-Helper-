@@ -6,8 +6,8 @@
 
 - Oracle 인스턴스: `gta-report-receiver` (`VM.Standard.E2.1.Micro`, 50GB 부트 볼륨)
 - 네트워크: DC 매니저와 분리된 `10.0.1.0/24` 전용 서브넷과 전용 보안 목록
-- 공개 주소: `https://gta-reports.217-142-244-125.sslip.io/v1/reports`
-- 상태 확인: `https://gta-reports.217-142-244-125.sslip.io/health`
+- 공개 주소: `https://gta-reports.64-110-118-28.sslip.io/v1/reports`
+- 상태 확인: `https://gta-reports.64-110-118-28.sslip.io/health`
 - 프로그램: `/opt/gta-report-receiver/receiver.py`
 - 성공 저장 경로: `/var/lib/gta-report-receiver/success/YYYY-MM-DD/`
 - 실패 저장 경로: `/var/lib/gta-report-receiver/failure/YYYY-MM-DD/`
@@ -26,7 +26,7 @@
 systemctl is-active gta-report-receiver.service
 systemctl is-active gta-report-cleanup.timer
 systemctl is-active nginx
-curl --fail https://gta-reports.217-142-244-125.sslip.io/health
+curl --fail https://gta-reports.64-110-118-28.sslip.io/health
 journalctl -u gta-report-receiver.service -n 30 --no-pager
 ```
 

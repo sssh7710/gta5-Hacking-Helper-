@@ -125,6 +125,8 @@ def store_report(
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary_name, target)
+        timestamp = current.timestamp()
+        os.utime(target, (timestamp, timestamp))
         os.chmod(target, 0o600)
     finally:
         try:
