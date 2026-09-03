@@ -13,6 +13,7 @@ DEFAULT_KEYS = {
     "select": "Enter / 마우스 1", "back": "Backspace / Esc",
 }
 UPDATE_CHANNELS = {"release", "beta"}
+DIAGNOSTIC_UPLOAD_URL = "https://gta-reports.64-110-118-28.sslip.io/v1/reports"
 
 
 @dataclass
@@ -42,7 +43,7 @@ class AppConfig:
     auto_update_enabled: bool = True
     update_channel: str = "beta"
     diagnostic_upload_enabled: bool = True
-    diagnostic_upload_url: str = "https://gta-reports.64-110-118-28.sslip.io/v1/reports"
+    diagnostic_upload_url: str = DIAGNOSTIC_UPLOAD_URL
     game_title_patterns: list[str] = field(default_factory=lambda: ["grand theft auto", "gta v"])
 
     @classmethod
@@ -64,6 +65,9 @@ class AppConfig:
             config.guide_font_size = 11
         if not isinstance(config.update_channel, str) or config.update_channel not in UPDATE_CHANNELS:
             config.update_channel = "beta"
+        if config.diagnostic_upload_url != DIAGNOSTIC_UPLOAD_URL:
+            config.diagnostic_upload_url = DIAGNOSTIC_UPLOAD_URL
+            config.save(path)
         return config
 
     def save(self, path: Path) -> None:

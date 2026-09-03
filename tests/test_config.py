@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gta_helper.config import AppConfig
+from gta_helper.config import AppConfig, DIAGNOSTIC_UPLOAD_URL
 
 
 class ConfigTests(unittest.TestCase):
@@ -68,3 +68,17 @@ class ConfigTests(unittest.TestCase):
 
             path.write_text(json.dumps({"update_channel": "invalid"}), encoding="utf-8")
             self.assertEqual(AppConfig.load(path).update_channel, "beta")
+
+    def test_load_replaces_user_configured_upload_url(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(
+                json.dumps({"diagnostic_upload_url": "https://example.invalid/v1/reports"}),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(path)
+
+            self.assertEqual(config.diagnostic_upload_url, DIAGNOSTIC_UPLOAD_URL)
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["diagnostic_upload_url"], DIAGNOSTIC_UPLOAD_URL)
