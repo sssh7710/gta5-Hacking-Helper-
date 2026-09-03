@@ -85,6 +85,13 @@ class Scanner(threading.Thread):
             max_total_bytes=self.config.diagnostic_capture_max_mb * 1024 * 1024,
             answer_confidence_threshold=self.config.confidence_threshold,
         )
+        try:
+            removed = recorder.prune_old_sessions()
+        except CaptureError as exc:
+            self.events.put(("status", str(exc)))
+        else:
+            if removed:
+                self.events.put(("status", f"오래된 인식 개선 자료 {len(removed)}개를 정리했습니다."))
         last_signature: tuple | None = None
         try:
             self._capture = DxCapture(self.config)
