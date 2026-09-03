@@ -341,6 +341,13 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(len(result.details), 5)
         self.assertIn("1번 줄", result.details[0])
 
+    def test_cayo_solver_rejects_low_confidence_environment_match(self) -> None:
+        target = np.zeros((200, 160, 3), dtype=np.uint8)
+        rows = [np.zeros((40, 160, 3), dtype=np.uint8) for _ in range(5)]
+
+        with patch("gta_helper.solvers._score_template", return_value=0.30):
+            self.assertIsNone(CayoFingerprintSolver().solve_regions(target, rows))
+
     def test_voltlab_solver_finds_unique_multiplier_mapping(self) -> None:
         result = VoltLabSolver().solve_values(95, [1, 4, 9], [1, 1, 10])
         self.assertIsNotNone(result)

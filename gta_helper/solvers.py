@@ -13,6 +13,7 @@ from .models import GridPoint, PuzzleType, SolveResult
 
 _FINGERPRINT_PROCESSING_SCALE = .65
 _FINGERPRINT_SCALES = tuple(float(scale) for scale in np.arange(.50, 1.71, .05))
+_MIN_CAYO_CONFIDENCE = .68
 
 
 def _edge(image: np.ndarray) -> np.ndarray:
@@ -428,7 +429,10 @@ class CayoFingerprintSolver:
             details.append(f"{row_index + 1}번 줄: 조각 {desired + 1} ({movement})")
             scores.append(matches[current])
         confidence = max(0.0, min(0.99, float(np.mean(scores))))
-        if confidence < 0.20:
+        # 앱에서 결과를 표시하는 기준과 동일하게 취급한다. 낮은 점수의
+        # 환경 화면이나 작전실 UI가 카요 퍼즐로 오인되면 빈 결과가
+        # 진단 세션으로 저장되므로, 충분히 일치할 때만 확정한다.
+        if confidence < _MIN_CAYO_CONFIDENCE:
             return None
         return SolveResult(
             puzzle=PuzzleType.CAYO_FINGERPRINT,
