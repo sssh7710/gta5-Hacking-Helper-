@@ -138,15 +138,9 @@ class Scanner(threading.Thread):
                 except CaptureError as exc:
                     self.events.put(("status", str(exc)))
                 if self.diagnostic_event.is_set():
-                    try:
-                        session = self._capture.save_diagnostic(frame, self.config.diagnostic_dir, "gta")
-                    except CaptureError as exc:
-                        self.events.put(("status", str(exc)))
-                    else:
-                        self.events.put(("status", f"수동 진단 저장: {session.name}"))
-                        self.events.put(("diagnostic_completed", session))
-                    finally:
-                        self.diagnostic_event.clear()
+                    self.events.put(("diagnostic_frame", frame.copy()))
+                    self.events.put(("status", "수동 진단 서버 전송 대기"))
+                    self.diagnostic_event.clear()
                 self.events.put(("state", (AppState.ANALYZING, "해킹 화면 자동 감시 중")))
                 result = analyzer.update(frame)
                 if analyzer.dot.grid_visible:
@@ -288,7 +282,7 @@ class HelperApp:
         self._update_check_in_progress = False
         self.voice = SpeechService(self.config.voice_enabled, self.config.voice_rate)
         self.reporter = DiagnosticReporter(
-            self.config.diagnostic_upload_url if self.config.diagnostic_upload_enabled else "",
+            self.config.diagnostic_upload_url,
             self.config.confidence_threshold,
             notify=lambda message: self.events.put(("status", message)),
         )
@@ -320,7 +314,7 @@ class HelperApp:
         buttons = tk.Frame(panel, bg="#111827")
         buttons.pack(side="bottom", fill="x", pady=(10, 0))
         ttk.Button(buttons, text="설정", command=self.show_settings).pack(side="left")
-        ttk.Button(buttons, text="진단 저장", command=self.scanner.save_diagnostic).pack(side="left", padx=5)
+        ttk.Button(buttons, text="진단 전송", command=self.scanner.save_diagnostic).pack(side="left", padx=5)
         ttk.Button(buttons, text="재인식", command=self.scanner.reset_analysis).pack(side="left")
         self.lock_button = ttk.Button(buttons, text="오버레이 잠금", command=self.toggle_lock)
         self.lock_button.pack(side="left")
@@ -427,7 +421,7 @@ class HelperApp:
         )
         update_channel.grid(row=5, column=1, padx=8)
         diagnostic_upload_var = tk.BooleanVar(value=self.config.diagnostic_upload_enabled)
-        upload_text = "진단 자료 자동 전송 (자동/수동)" if self.reporter.configured else "진단 자료 자동 전송 (서버 준비 전)"
+        upload_text = "진단 자료 자동 전송" if self.reporter.configured else "진단 자료 자동 전송 (서버 준비 전)"
         ttk.Checkbutton(body, text=upload_text, variable=diagnostic_upload_var).grid(row=6, column=0, columnspan=2, sticky="w", pady=4)
         ttk.Label(body, text="※ 전송 자료에는 GTA 게임 화면이 포함될 수 있습니다.", foreground="#9a6700").grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 4))
         ttk.Label(body, text="안내 글자 크기").grid(row=8, column=0, sticky="w", pady=4)
@@ -590,11 +584,13 @@ class HelperApp:
                     self.voice.say(result.summary + ". " + ". ".join(result.details))
                     content_changed = True
                 else:
-                    self.detail_var.set("신뢰도가 낮아 답을 표시하지 않았습니다. 진단 저장을 사용하세요.")
+                    self.detail_var.set("신뢰도가 낮아 답을 표시하지 않았습니다. 진단 전송을 사용하세요.")
                     content_changed = True
             elif kind == "diagnostic_completed":
                 if self.config.diagnostic_upload_enabled:
                     self.reporter.submit(payload)  # type: ignore[arg-type]
+            elif kind == "diagnostic_frame":
+                self.reporter.submit_frame(payload)  # type: ignore[arg-type]
             elif kind == "update_available":
                 info, source_button = payload  # type: ignore[misc]
                 self._offer_update(info, source_button)
