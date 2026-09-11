@@ -12,6 +12,8 @@ config.json
 diagnostics/*
 updates/
 !diagnostics/.gitkeep
+server-logs/*
+!server-logs/.gitkeep
 assets/reference/*
 !assets/reference/.gitkeep
 !assets/reference/SOURCES.md
