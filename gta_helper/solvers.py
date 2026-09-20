@@ -105,6 +105,7 @@ class DotMemorySolver:
         self.repeats_needed = repeats_needed
         self.final_blank_frames = max(1, int(final_blank_frames))
         self._previous: tuple[GridPoint, ...] | None = None
+        self._stable_pattern_frames = 0
         self._counts: Counter[tuple[GridPoint, ...]] = Counter()
         self._last_result: tuple[GridPoint, ...] | None = None
         self._pending_pattern: tuple[GridPoint, ...] | None = None
@@ -121,6 +122,7 @@ class DotMemorySolver:
 
     def reset(self) -> None:
         self._previous = None
+        self._stable_pattern_frames = 0
         self._counts.clear()
         self._last_result = None
         self._pending_pattern = None
@@ -280,6 +282,7 @@ class DotMemorySolver:
         detected = self._detect(frame)
         if detected is None:
             self._previous = None
+            self._stable_pattern_frames = 0
             if self._grid_visible:
                 self._missing_grid_frames = 0
                 if self._red_input_visible:
@@ -326,11 +329,21 @@ class DotMemorySolver:
         if pattern != self._previous:
             self._counts[pattern] += 1
             self._previous = pattern
+            self._stable_pattern_frames = 1
+        else:
+            self._stable_pattern_frames += 1
         count = self._counts[pattern]
         can_emit = pattern != self._last_result or self._different_pattern_seen
         if count >= self.repeats_needed and can_emit:
             confidence = min(0.98, 0.58 + 0.10 * count + 0.12 * regularity)
             return self._result(pattern, confidence, {"repeats": count, "completion": "repeated"})
+        if self._stable_pattern_frames >= 3 and can_emit:
+            confidence = min(0.90, 0.58 + 0.10 + 0.12 * regularity)
+            return self._result(
+                pattern,
+                confidence,
+                {"repeats": count, "completion": "stable", "stable_frames": self._stable_pattern_frames},
+            )
         return None
 
     def _fallback_result(self, completion: str) -> SolveResult | None:

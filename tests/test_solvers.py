@@ -97,6 +97,19 @@ class SolverTests(unittest.TestCase):
             [(1, 3), (1, 5), (3, 1), (3, 4), (3, 6), (4, 2)],
         )
 
+    def test_dot_solver_confirms_complete_pattern_held_for_three_frames(self) -> None:
+        solver = DotMemorySolver()
+        pattern = {(0, 0), (0, 5), (1, 2), (2, 3), (3, 1), (4, 4)}
+
+        self.assertIsNone(solver.update(dot_frame(pattern)))
+        self.assertIsNone(solver.update(dot_frame(pattern)))
+        result = solver.update(dot_frame(pattern))
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.debug["completion"], "stable")
+        self.assertEqual(result.debug["stable_frames"], 3)
+
     def test_dot_solver_uses_last_complete_pattern_when_final_repeat_is_dropped(self) -> None:
         solver = DotMemorySolver(final_blank_frames=6)
         first = {(0, 0), (0, 5), (1, 1), (2, 2), (3, 3), (4, 4)}
