@@ -14,7 +14,7 @@
 - 서비스: `gta-report-receiver.service`
 - 정리 타이머: `gta-report-cleanup.timer`
 - 보존 기간: 30일
-- 전체 저장 한도: 5GB
+- 전체 저장 한도: 20GiB
 
 이 서버는 Oracle Always Free의 두 번째 E2.1.Micro와 전체 무료 200GB 중 50GB 부트 볼륨을 사용합니다. 유료 로드밸런서, Object Storage, 별도 블록 볼륨과 유료 백업을 사용하지 않습니다.
 
