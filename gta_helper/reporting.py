@@ -36,6 +36,8 @@ def session_outcome(session_dir: str | Path, confidence_threshold: float) -> str
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    if metadata.get("capture_trigger") == "manual":
+        return "failure"
     recorded = metadata.get("answer_outcome")
     if recorded in {"success", "failure"}:
         return str(recorded)

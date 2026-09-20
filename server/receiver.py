@@ -36,6 +36,8 @@ class StorageFullError(OSError):
 
 
 def classify_report(metadata: dict[str, Any], default_threshold: float = 0.68) -> str:
+    if metadata.get("capture_trigger") == "manual":
+        return "failure"
     recorded = metadata.get("answer_outcome")
     if recorded in {"success", "failure"}:
         return str(recorded)

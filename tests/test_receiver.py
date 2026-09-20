@@ -32,6 +32,7 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(classify_report({"result_summary": "answer", "result_confidence": 0.9}), "success")
         self.assertEqual(classify_report({"result_summary": "candidate", "result_confidence": 0.5}), "failure")
         self.assertEqual(classify_report({"label": "pending"}), "failure")
+        self.assertEqual(classify_report({"capture_trigger": "manual", "answer_outcome": "success"}), "failure")
 
     def test_rejects_non_jpeg_and_nested_paths(self) -> None:
         with self.assertRaises(ValidationError):

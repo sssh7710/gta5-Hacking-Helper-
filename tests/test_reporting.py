@@ -57,6 +57,7 @@ class ReportingTests(unittest.TestCase):
         metadata = validate_report_archive(request.data)
         self.assertEqual(metadata["capture_trigger"], "manual")
         self.assertEqual(metadata["frame_count"], 1)
+        self.assertEqual(metadata["answer_outcome"], "failure")
         self.assertTrue(report_id)
 
     def test_missing_result_and_low_confidence_are_unresolved(self) -> None:
@@ -74,6 +75,9 @@ class ReportingTests(unittest.TestCase):
             self.assertEqual(session_outcome(session, 0.68), "success")
 
             metadata.write_text(json.dumps({"answer_outcome": "failure", "result_summary": "answer", "result_confidence": 0.9}), encoding="utf-8")
+            self.assertEqual(session_outcome(session, 0.68), "failure")
+
+            metadata.write_text(json.dumps({"capture_trigger": "manual", "answer_outcome": "success"}), encoding="utf-8")
             self.assertEqual(session_outcome(session, 0.68), "failure")
 
     def test_reporter_queues_success_and_failure_sessions(self) -> None:
