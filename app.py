@@ -31,6 +31,12 @@ def _restart_in_project_venv() -> None:
 
 _restart_in_project_venv()
 
+from gta_helper.crash_reporting import CrashReporter
+
+CRASH_REPORTER = CrashReporter(ROOT)
+if __name__ == "__main__":
+    CRASH_REPORTER.install()
+
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -88,6 +94,7 @@ class Scanner(threading.Thread):
         try:
             removed = recorder.prune_old_sessions()
         except CaptureError as exc:
+            CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
             self.events.put(("status", str(exc)))
         else:
             if removed:
@@ -126,6 +133,7 @@ class Scanner(threading.Thread):
                 try:
                     frame = self._capture.grab(game)
                 except CaptureError as exc:
+                    CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
                     self.events.put(("state", (AppState.ERROR, str(exc))))
                     time.sleep(1.0)
                     continue
@@ -136,6 +144,7 @@ class Scanner(threading.Thread):
                         self.events.put(("status", f"인식 개선 사진 저장: {completed_session.name}"))
                         self.events.put(("diagnostic_completed", completed_session))
                 except CaptureError as exc:
+                    CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
                     self.events.put(("status", str(exc)))
                 if self.diagnostic_event.is_set():
                     self.events.put(("diagnostic_frame", frame.copy()))
@@ -184,6 +193,7 @@ class Scanner(threading.Thread):
                                 self.events.put(("fingerprint_start", None))
                                 self.events.put(("status", f"지문 인식 진단 수집 시작: {session_dir.name}"))
                             except CaptureError as exc:
+                                CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
                                 self.events.put(("status", str(exc)))
                     else:
                         casino_missing_checks += 1
@@ -214,6 +224,7 @@ class Scanner(threading.Thread):
                             )
                             self.events.put(("status", f"인식 개선 사진 수집 시작: {session_dir.name}"))
                         except CaptureError as exc:
+                            CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
                             self.events.put(("status", str(exc)))
                     last_observed_pattern = observed_pattern
                 # 점멸 해킹 결과는 솔버가 판마다 한 번만 반환한다. 다음 판의
@@ -232,6 +243,7 @@ class Scanner(threading.Thread):
                             )
                             self.events.put(("status", f"인식 개선 사진 수집 시작: {session_dir.name}"))
                         except CaptureError as exc:
+                            CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
                             self.events.put(("status", str(exc)))
                     recorder.annotate(
                         expected_puzzle=result.puzzle.name,
@@ -249,6 +261,7 @@ class Scanner(threading.Thread):
                 if remaining > 0:
                     self.stop_event.wait(remaining)
         except Exception as exc:
+            CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
             self.events.put(("state", (AppState.ERROR, f"스캐너 오류: {exc}")))
         finally:
             completed_session = recorder.close()
@@ -265,6 +278,7 @@ class HelperApp:
         self.config = AppConfig.load(self.config_path)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.root = tk.Tk()
+        self.root.report_callback_exception = CRASH_REPORTER.tk_exception
         self.root.title(f"GTA 해킹 안내 도우미 {APP_VERSION}")
         self.root.geometry(f"{self.config.overlay_width}x{self.config.overlay_height}+{self.config.overlay_x}+{self.config.overlay_y}")
         self.root.attributes("-topmost", True)
@@ -421,7 +435,7 @@ class HelperApp:
         )
         update_channel.grid(row=5, column=1, padx=8)
         diagnostic_upload_var = tk.BooleanVar(value=self.config.diagnostic_upload_enabled)
-        upload_text = "진단 자료 자동 전송" if self.reporter.configured else "진단 자료 자동 전송 (서버 준비 전)"
+        upload_text = "인식·앱 오류 자료 자동 전송" if self.reporter.configured else "인식·앱 오류 자료 자동 전송 (서버 준비 전)"
         ttk.Checkbutton(body, text=upload_text, variable=diagnostic_upload_var).grid(row=6, column=0, columnspan=2, sticky="w", pady=4)
         ttk.Label(body, text="※ 전송 자료에는 GTA 게임 화면이 포함될 수 있습니다.", foreground="#9a6700").grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 4))
         ttk.Label(body, text="안내 글자 크기").grid(row=8, column=0, sticky="w", pady=4)

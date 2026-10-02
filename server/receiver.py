@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import zipfile
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
@@ -15,13 +16,14 @@ from pathlib import Path
 from typing import Any
 
 
-SERVICE_VERSION = "1.1.0"
+SERVICE_VERSION = "1.2.0"
 MAX_REQUEST_BYTES = 50 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
 MAX_METADATA_BYTES = 1024 * 1024
 MAX_FRAME_BYTES = 10 * 1024 * 1024
 MAX_FRAMES = 80
 MAX_STORAGE_BYTES = 20 * 1024 * 1024 * 1024
+STORAGE_LOCK = threading.Lock()
 REPORT_ID_RE = re.compile(r"[0-9a-f]{32}")
 APP_VERSION_RE = re.compile(r"[0-9A-Za-z._-]{1,40}")
 FRAME_NAME_RE = re.compile(r"frame_\d{4}_\d+ms\.jpg")
@@ -36,6 +38,8 @@ class StorageFullError(OSError):
 
 
 def classify_report(metadata: dict[str, Any], default_threshold: float = 0.68) -> str:
+    if metadata.get("report_type") == "app_error":
+        return "app_error"
     if metadata.get("capture_trigger") == "manual":
         return "failure"
     recorded = metadata.get("answer_outcome")
@@ -72,7 +76,7 @@ def validate_report_archive(data: bytes) -> dict[str, Any]:
             if any("/" in name or "\\" in name or name in {"", ".", ".."} for name in names):
                 raise ValidationError("ZIP 안의 경로를 허용하지 않습니다.")
             frames = [name for name in names if FRAME_NAME_RE.fullmatch(name)]
-            if not 1 <= len(frames) <= MAX_FRAMES:
+            if len(frames) > MAX_FRAMES:
                 raise ValidationError("진단 JPEG 개수가 허용 범위를 벗어났습니다.")
             if set(names) != {"session.json", *frames}:
                 raise ValidationError("허용되지 않은 파일이 포함되어 있습니다.")
@@ -87,6 +91,27 @@ def validate_report_archive(data: bytes) -> dict[str, Any]:
                 raise ValidationError("session.json 형식이 올바르지 않습니다.") from exc
             if not isinstance(metadata, dict):
                 raise ValidationError("session.json은 JSON 객체여야 합니다.")
+            if metadata.get("report_type") == "app_error":
+                if frames or set(names) != {"session.json"}:
+                    raise ValidationError("앱 오류 자료에는 화면을 포함할 수 없습니다.")
+                if set(metadata) != {"report_type", "source", "app_version", "occurred_at", "exception_type", "stack"}:
+                    raise ValidationError("앱 오류 정보 필드가 올바르지 않습니다.")
+                if not isinstance(metadata["source"], str) or metadata["source"] not in {"main", "thread", "scanner", "ui"}:
+                    raise ValidationError("앱 오류 출처가 올바르지 않습니다.")
+                if any(not isinstance(metadata[key], str) or len(metadata[key]) > 100
+                       for key in ("app_version", "occurred_at", "exception_type")):
+                    raise ValidationError("앱 오류 정보가 올바르지 않습니다.")
+                stack = metadata["stack"]
+                if not isinstance(stack, list) or len(stack) > 40:
+                    raise ValidationError("앱 오류 스택이 올바르지 않습니다.")
+                for frame in stack:
+                    if (not isinstance(frame, dict) or set(frame) != {"file", "line", "function"}
+                        or not isinstance(frame["line"], int) or frame["line"] < 1
+                        or any(not isinstance(frame[key], str) or len(frame[key]) > 255 for key in ("file", "function"))
+                        or any(char in frame["file"] for char in "/\\:")):
+                        raise ValidationError("앱 오류 위치가 올바르지 않습니다.")
+            elif not frames:
+                raise ValidationError("진단 JPEG 개수가 허용 범위를 벗어났습니다.")
             for name in frames:
                 item = archive.getinfo(name)
                 if not 4 <= item.file_size <= MAX_FRAME_BYTES:
@@ -106,8 +131,14 @@ def store_report(
     outcome: str,
     now: datetime | None = None,
 ) -> tuple[Path, bool]:
-    if outcome not in {"success", "failure"}:
-        raise ValueError("outcome은 success 또는 failure여야 합니다.")
+    with STORAGE_LOCK:
+        return _store_report(data, report_id, storage, outcome, now)
+
+
+def _store_report(data: bytes, report_id: str, storage: str | Path,
+                  outcome: str, now: datetime | None) -> tuple[Path, bool]:
+    if outcome not in {"success", "failure", "app_error"}:
+        raise ValueError("지원하지 않는 자료 분류입니다.")
     current = now or datetime.now(timezone.utc)
     day = current.strftime("%Y-%m-%d")
     root = Path(storage)
@@ -117,9 +148,11 @@ def store_report(
     existing = next((path for path in report_files(root) if path.name == target.name), None)
     if existing is not None:
         return existing, False
-    stored_bytes = sum(path.stat().st_size for path in report_files(root))
-    if stored_bytes + len(data) > MAX_STORAGE_BYTES:
-        raise StorageFullError("진단 자료 저장 한도에 도달했습니다.")
+    group_files = [path for path in report_files(root)
+                   if (path.parent.parent.name == "app_error") == (outcome == "app_error")]
+    stored_bytes = sum(path.stat().st_size for path in group_files if path.exists())
+    if stored_bytes + len(data) > MAX_STORAGE_BYTES // 2:
+        raise StorageFullError("해당 자료 종류의 저장 한도에 도달했습니다.")
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{report_id}.", suffix=".tmp", dir=directory)
     try:
         with os.fdopen(descriptor, "wb") as output:
@@ -139,6 +172,11 @@ def store_report(
 
 
 def cleanup_reports(storage: str | Path, retention_days: int, now: datetime | None = None) -> int:
+    with STORAGE_LOCK:
+        return _cleanup_reports(storage, retention_days, now)
+
+
+def _cleanup_reports(storage: str | Path, retention_days: int, now: datetime | None) -> int:
     root = Path(storage)
     if not root.exists():
         return 0
@@ -188,7 +226,10 @@ class ReportHandler(BaseHTTPRequestHandler):
         if self.path != "/health":
             self._json_response(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
-        self._json_response(HTTPStatus.OK, {"status": "ok", "version": SERVICE_VERSION})
+        self._json_response(HTTPStatus.OK, {
+            "status": "ok", "version": SERVICE_VERSION,
+            "storage_limits_bytes": {"recognition": MAX_STORAGE_BYTES // 2, "app_error": MAX_STORAGE_BYTES // 2},
+        })
 
     def do_POST(self) -> None:
         if self.path != "/v1/reports":
