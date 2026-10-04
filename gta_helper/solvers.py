@@ -120,6 +120,9 @@ class DotMemorySolver:
         self._blank_frames_after_pattern = 0
         self._grid_visible = False
         self._red_input_visible = False
+        self._cyan_visible = False
+        self._requires_pattern_repeat = False
+        self._grid_geometry: tuple[list[int], list[int], int] | None = None
         self._missing_grid_frames = 0
         self._inactive_grid_frames = 0
         self._different_pattern_seen = False
@@ -137,6 +140,9 @@ class DotMemorySolver:
         self._blank_frames_after_pattern = 0
         self._grid_visible = False
         self._red_input_visible = False
+        self._cyan_visible = False
+        self._requires_pattern_repeat = False
+        self._grid_geometry = None
         self._missing_grid_frames = 0
         self._inactive_grid_frames = 0
         self._different_pattern_seen = False
@@ -193,6 +199,7 @@ class DotMemorySolver:
     def _detect(self, frame: np.ndarray) -> tuple[tuple[GridPoint, ...], float] | None:
         self._grid_visible = False
         self._red_input_visible = False
+        self._cyan_visible = False
         self.current_pattern = ()
         self.current_grid_shape = (0, 0)
         # 점멸 키패드는 6×5 또는 5×4 격자다. 켜진 점만으로
@@ -203,18 +210,28 @@ class DotMemorySolver:
             frame[:round(height * .86), :round(width * .70)],
             cv2.COLOR_BGR2GRAY,
         )
-        circles = cv2.HoughCircles(cv2.medianBlur(scan, 5), cv2.HOUGH_GRADIENT, 1.2, max(34, frame.shape[0] // 15), param1=80, param2=25, minRadius=max(10, frame.shape[0] // 38), maxRadius=max(16, frame.shape[0] // 13))
-        if circles is None:
-            return None
-
-        raw = [
-            (round(x), round(y), round(radius))
-            for x, y, radius in circles[0]
-            if width * .20 < x < width * .65
-            and height * .18 < y < height * .82
-            and height * .025 < radius < height * .065
-        ]
-        if len(raw) < 20:
+        raw: list[tuple[int, int, int]] = []
+        faint_rings_detected = False
+        for preserve_thin_rings in (False, True):
+            # 아케이드의 어두운 점선 테두리는 5픽셀 중앙값 필터에서
+            # 사라진다. 기존 감지가 부족할 때만 얇은 테두리를 보존한다.
+            blurred = cv2.GaussianBlur(scan, (3, 3), 0) if preserve_thin_rings else cv2.medianBlur(scan, 5)
+            circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1.2, max(34, frame.shape[0] // 15), param1=80, param2=25, minRadius=max(10, frame.shape[0] // 38), maxRadius=max(16, frame.shape[0] // 13))
+            candidates = [] if circles is None else [
+                (round(x), round(y), round(radius))
+                for x, y, radius in circles[0]
+                if width * .20 < x < width * .65
+                and height * .18 < y < height * .82
+                and height * .025 < radius < height * .065
+            ]
+            if len(candidates) > len(raw):
+                raw = candidates
+                faint_rings_detected = preserve_thin_rings
+            # 일부 열만 밝아진 6×5 화면을 5×4로 줄이지 않도록
+            # 30개 미만이면 점선 테두리 보존 방식도 확인한다.
+            if len(raw) >= 30:
+                break
+        if len(raw) < 3:
             return None
 
         median_radius = int(np.median([radius for _, _, radius in raw]))
@@ -234,14 +251,47 @@ class DotMemorySolver:
             occupancy = occupied / (column_count * row_count)
             if occupancy >= .90:
                 grids.append((occupancy, candidate_xs, candidate_ys))
+        if self._grid_geometry is not None:
+            previous_xs, previous_ys, previous_radius = self._grid_geometry
+            supported = sum(
+                any(
+                    abs(x - grid_x) <= axis_tolerance
+                    and abs(y - grid_y) <= axis_tolerance
+                    and .65 <= radius / max(previous_radius, 1) <= 1.35
+                    for x, y, radius in raw
+                )
+                for grid_y in previous_ys for grid_x in previous_xs
+            )
+            occupancy = supported / (len(previous_xs) * len(previous_ys))
+            # 이미 확인한 격자는 60% 이상의 원이 같은 위치에 남으면
+            # 순간 감지 누락으로 취급한다. 첫 감지의 90% 기준은 유지한다.
+            if occupancy >= .60:
+                grids.append((occupancy, previous_xs, previous_ys))
         if not grids:
             return None
         # A partly obscured 6x5 grid can leave a perfect 5x4 inner subset.
         # Prefer the larger valid grid so that subset is not reported as a
         # shifted normal-mode answer.
         regularity, xs, ys = max(grids, key=lambda item: (len(item[1]) * len(item[2]), item[0]))
+        if self._grid_geometry is not None:
+            previous_xs, previous_ys, previous_radius = self._grid_geometry
+            if xs is previous_xs and ys is previous_ys:
+                median_radius = previous_radius
+            if (
+                len(xs) * len(ys) < len(previous_xs) * len(previous_ys)
+                and all(any(abs(x - old_x) <= axis_tolerance for old_x in previous_xs) for x in xs)
+                and all(any(abs(y - old_y) <= axis_tolerance for old_y in previous_ys) for y in ys)
+            ):
+                # 같은 화면의 어두운 마지막 열/행을 놓쳐 내부 5×4만
+                # 남아도 이미 확인한 6×5 좌표로 모든 신호를 읽는다.
+                xs, ys, median_radius = previous_xs, previous_ys, previous_radius
+        self._grid_geometry = (xs, ys, median_radius)
         self._grid_visible = True
         self.current_grid_shape = (len(ys), len(xs))
+        if faint_rings_detected:
+            # 아케이드에서는 정답 전 중간 배열도 3프레임 이상 유지된다.
+            # 이런 화면은 짧은 정지 대신 반복 표시로 확정한다.
+            self._requires_pattern_repeat = True
 
         # 점은 청록색으로 켜진 뒤 빨간 표시로 남을 수 있다. 두 색을 모두 읽되,
         # 흰색 선택 테두리와 어두운 격자 무늬는 제외한다.
@@ -263,7 +313,9 @@ class DotMemorySolver:
                 values.append((GridPoint(row, column), cyan_coverage, red_coverage))
 
         red_coverage = np.array([red_value for _, _, red_value in values])
-        red_threshold = max(.035, float(np.median(red_coverage)) + .025)
+        # 카습의 작은 빨간 커서는 입력 단계 표시가 아니다. 원 내부가
+        # 충분히 빨간 경우에만 기존 빨간 선택 단계로 판단한다.
+        red_threshold = max(.35, float(np.median(red_coverage)) + .025)
         self._red_input_visible = bool(np.any(red_coverage >= red_threshold))
         if self._red_input_visible:
             # 빨간 원은 사용자가 답을 입력하는 단계다. 이전 답의 잠금을 풀되
@@ -273,6 +325,7 @@ class DotMemorySolver:
         coverage = np.array([cyan_value for _, cyan_value, _ in values])
         threshold = max(.035, float(np.median(coverage)) + .025)
         active = tuple(point for point, cyan_value, _ in values if cyan_value >= threshold)
+        self._cyan_visible = bool(active)
         # 어려움 6×5 패턴은 완성 시 6개, 보통 5×4 패턴은 5개가 켜진다.
         # 두 화면 모두 신호 열마다 세로 위치가 하나씩 있어야 완성 패턴이다.
         # 완성 전 중간 프레임을 정답으로 고정하지 않는다.
@@ -307,6 +360,12 @@ class DotMemorySolver:
                         if fallback is not None:
                             return fallback
                 elif self._last_result is not None:
+                    # 카습 입력 중에는 맞춘 원이 일부만 켜지거나 깜박인다.
+                    # 완성 배열이 없다는 이유만으로 이전 답의 잠금을 풀면
+                    # 입력 완료 때 같은 배열을 새 정답으로 다시 안내한다.
+                    if self._cyan_visible:
+                        self._inactive_grid_frames = 0
+                        return None
                     self._inactive_grid_frames += 1
                     if self._inactive_grid_frames >= 15:
                         self._counts.clear()
@@ -321,6 +380,11 @@ class DotMemorySolver:
         self._missing_grid_frames = 0
         self._inactive_grid_frames = 0
         pattern, regularity = detected
+        if pattern == self._last_result and not self._different_pattern_seen:
+            # 입력 확인 점멸은 다음 판의 반복 횟수로 누적하지 않는다.
+            self._previous = None
+            self._stable_pattern_frames = 0
+            return None
         self._pending_pattern = pattern
         self._pending_regularity = regularity
         self._pending_grid_shape = self.current_grid_shape
@@ -343,7 +407,7 @@ class DotMemorySolver:
         if count >= self.repeats_needed and can_emit:
             confidence = min(0.98, 0.58 + 0.10 * count + 0.12 * regularity)
             return self._result(pattern, confidence, {"repeats": count, "completion": "repeated"})
-        if self._stable_pattern_frames >= 3 and can_emit:
+        if self._stable_pattern_frames >= 3 and can_emit and not self._requires_pattern_repeat:
             confidence = min(0.90, 0.58 + 0.10 + 0.12 * regularity)
             return self._result(
                 pattern,

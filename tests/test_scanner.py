@@ -11,10 +11,86 @@ import numpy as np
 from app import Scanner
 from gta_helper.capture import DiagnosticFrameRecorder
 from gta_helper.config import AppConfig
-from gta_helper.models import PuzzleType, SolveResult
+from gta_helper.models import GridPoint, PuzzleType, SolveResult
 
 
 class ScannerDiagnosticTests(unittest.TestCase):
+    def test_keypad_detection_gap_does_not_erase_confirmed_answer(self):
+        config = AppConfig()
+        config.target_fps = 1000
+        config.diagnostic_capture_enabled = False
+        scanner = Scanner(config, queue.Queue())
+        answer = SolveResult(PuzzleType.DOT_MEMORY, .89, 'synthetic answer')
+        analyzer = Mock()
+        analyzer.dot.input_visible = False
+        analyzer.dot.current_grid_shape = (5, 6)
+        analyzer.casino_layout_checked = False
+        calls = 0
+
+        def analyze(_frame):
+            nonlocal calls
+            calls += 1
+            analyzer.dot.grid_visible = calls in (1, 17)
+            analyzer.dot.current_pattern = (GridPoint(1, 1),) if analyzer.dot.grid_visible else ()
+            if calls == 17:
+                scanner.stop_event.set()
+            return answer if calls == 1 else None
+
+        analyzer.update.side_effect = analyze
+        capture = Mock(backend='test')
+        capture.grab.return_value = np.zeros((48, 64, 3), dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            config.diagnostic_dir = directory
+            with (
+                patch('app.PuzzleAnalyzer', return_value=analyzer),
+                patch('app.DxCapture', return_value=capture),
+                patch('app.find_game_window', return_value=object()),
+            ):
+                scanner.run()
+        events = list(scanner.events.queue)
+        answer_index = next(i for i, (kind, _) in enumerate(events) if kind == 'result')
+        self.assertFalse(any(kind == 'keypad_start' for kind, _ in events[answer_index + 1:]))
+        self.assertTrue(any(kind == 'status' and '재감지' in payload
+                            for kind, payload in events[answer_index + 1:]))
+
+    def test_transient_keypad_pattern_does_not_erase_confirmed_answer(self):
+        config = AppConfig()
+        config.target_fps = 1000
+        config.diagnostic_capture_enabled = False
+        scanner = Scanner(config, queue.Queue())
+        answer = SolveResult(PuzzleType.DOT_MEMORY, .89, 'synthetic answer')
+        analyzer = Mock()
+        analyzer.dot.grid_visible = True
+        analyzer.dot.input_visible = False
+        analyzer.dot.current_grid_shape = (5, 6)
+        analyzer.casino_layout_checked = False
+        calls = 0
+
+        def analyze(_frame):
+            nonlocal calls
+            calls += 1
+            analyzer.dot.current_pattern = (GridPoint(1 if calls == 1 else 2, 1),)
+            if calls == 2:
+                scanner.stop_event.set()
+            return answer if calls == 1 else None
+
+        analyzer.update.side_effect = analyze
+        capture = Mock(backend='test')
+        capture.grab.return_value = np.zeros((48, 64, 3), dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            config.diagnostic_dir = directory
+            with (
+                patch('app.PuzzleAnalyzer', return_value=analyzer),
+                patch('app.DxCapture', return_value=capture),
+                patch('app.find_game_window', return_value=object()),
+            ):
+                scanner.run()
+        events = list(scanner.events.queue)
+        answer_index = next(i for i, (kind, _) in enumerate(events) if kind == 'result')
+        self.assertFalse(any(kind == 'keypad_start' for kind, _ in events[answer_index + 1:]))
+        self.assertTrue(any(kind == 'status' and '이전 정답' in payload
+                            for kind, payload in events[answer_index + 1:]))
+
     def run_frames(self, directory, *, result=None, content_visible=True, new_session=False):
         config = AppConfig()
         config.diagnostic_dir = directory

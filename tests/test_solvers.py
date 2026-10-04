@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import cv2
@@ -35,6 +36,101 @@ def kortz_frame(active: set[tuple[int, int]]) -> np.ndarray:
 
 
 class SolverTests(unittest.TestCase):
+    def test_arcade_faint_dotted_grid_and_complete_pattern(self) -> None:
+        # 실제 FHD 화면에서 격자만 남기고 나머지를 검게 가린 자료다.
+        data = np.fromfile(Path(__file__).with_name('arcade_keypad_grid.png'), dtype=np.uint8)
+        frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        self.assertIsNotNone(frame)
+        solver = DotMemorySolver()
+        self.assertIsNone(solver.update(frame))
+        self.assertTrue(solver.grid_visible)
+        self.assertEqual(solver.current_grid_shape, (5, 6))
+
+        # 실제 격자에 알려진 배열을 합성해 좌표 매핑도 확인한다.
+        rows = (1, 3, 2, 4, 0, 2)
+        for column, row in enumerate(rows):
+            cv2.circle(frame, (499 + column * 108, 343 + row * 108), 30, (240, 200, 50), -1)
+        self.assertIsNone(solver.update(frame))
+        self.assertIsNone(solver.update(frame))
+        self.assertIsNone(solver.update(frame))
+        self.assertIsNone(solver.update(cv2.imdecode(data, cv2.IMREAD_COLOR)))
+        result = solver.update(frame)
+        self.assertIsNotNone(result)
+        self.assertEqual(sorted((p.column, p.row) for p in result.locations),
+                         list(enumerate((row + 1 for row in rows), start=1)))
+
+    def test_arcade_partially_bright_columns_keep_six_by_five_grid(self) -> None:
+        data = np.fromfile(Path(__file__).with_name('arcade_keypad_grid.png'), dtype=np.uint8)
+        frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        for row in range(5):
+            for column in range(4):
+                cv2.circle(frame, (499 + column * 108, 343 + row * 108), 43, (150, 150, 150), 2)
+        solver = DotMemorySolver()
+        self.assertIsNone(solver.update(frame))
+        self.assertTrue(solver.grid_visible)
+        self.assertEqual(solver.current_grid_shape, (5, 6))
+
+    def test_known_six_by_five_grid_does_not_shrink_to_detected_inner_subset(self) -> None:
+        solver = DotMemorySolver()
+        pattern = {(0, 0), (0, 5), (1, 1), (2, 2), (3, 3), (4, 4)}
+        frame = dot_frame(pattern)
+        self.assertIsNone(solver.update(frame))
+        self.assertEqual(solver.current_grid_shape, (5, 6))
+        subset_circles = np.array([[
+            (320 + col * 95, 130 + row * 72, 22)
+            for row in range(4) for col in range(5)
+        ]], dtype=np.float32)
+        with patch('gta_helper.solvers.cv2.HoughCircles', return_value=subset_circles):
+            self.assertIsNone(solver.update(frame))
+            result = solver.update(frame)
+            self.assertIsNotNone(result)
+            self.assertEqual(result.debug['grid_columns'], 6)
+            self.assertEqual(len(result.locations), 6)
+            solver.reset()
+            self.assertIsNone(solver._grid_geometry)
+            solver.update(frame)
+            self.assertEqual(solver.current_grid_shape, (4, 5))
+
+    def test_confirmation_blinks_do_not_seed_next_round_repeat_counts(self) -> None:
+        solver = DotMemorySolver()
+        first = {(0, 0), (0, 5), (1, 1), (2, 2), (3, 3), (4, 4)}
+        middle = {(0, 4), (1, 0), (1, 2), (2, 5), (3, 1), (3, 3)}
+        solver.update(dot_frame(first))
+        solver.update(dot_frame(set()))
+        self.assertIsNotNone(solver.update(dot_frame(first)))
+        for _ in range(3):
+            solver.update(dot_frame(set()))
+            self.assertIsNone(solver.update(dot_frame(first)))
+        solver.update(dot_frame(set()))
+        self.assertIsNone(solver.update(dot_frame(middle)))
+        solver.update(dot_frame(set()))
+        self.assertIsNone(solver.update(dot_frame(first)))
+        solver.update(dot_frame(set()))
+        self.assertIsNotNone(solver.update(dot_frame(first)))
+
+    def test_known_grid_recovers_when_only_eighteen_rings_are_detected(self) -> None:
+        solver = DotMemorySolver()
+        pattern = {(0, 0), (0, 5), (1, 1), (2, 2), (3, 3), (4, 4)}
+        frame = dot_frame(pattern)
+        self.assertIsNone(solver.update(frame))
+        solver.update(dot_frame(set()))
+        sparse_circles = np.array([[
+            (320 + col * 95, 130 + row * 72, 22)
+            for row in range(3) for col in range(6)
+        ]], dtype=np.float32)
+        with patch('gta_helper.solvers.cv2.HoughCircles', return_value=sparse_circles):
+            result = solver.update(frame)
+            self.assertTrue(solver.grid_visible)
+            self.assertEqual(solver.current_grid_shape, (5, 6))
+            self.assertIsNotNone(result)
+            self.assertEqual(len(result.locations), 6)
+
+            fresh_solver = DotMemorySolver()
+            self.assertIsNone(fresh_solver.update(frame))
+            self.assertFalse(fresh_solver.grid_visible)
+        self.assertIsNone(solver.update(np.zeros_like(frame)))
+        self.assertFalse(solver.grid_visible)
+
     def test_fingerprint_scores_reuse_only_identical_preprocessed_inputs(self) -> None:
         target = np.zeros((100, 100, 3), dtype=np.uint8)
         target[20:60, 20:60] = 255
@@ -301,6 +397,32 @@ class SolverTests(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual([(point.row, point.column) for point in result.locations], [(1, 1), (1, 6), (2, 5), (3, 4), (4, 3), (5, 2)])
+
+    def test_dot_solver_keeps_answer_during_casino_input_and_confirmation_blinks(self) -> None:
+        solver = DotMemorySolver()
+        pattern = {(0, 0), (0, 5), (1, 1), (2, 2), (3, 3), (4, 4)}
+        for _ in range(2):
+            self.assertIsNone(solver.update(dot_frame(pattern)))
+        self.assertIsNotNone(solver.update(dot_frame(pattern)))
+
+        partial = dot_frame({(0, 0), (1, 1)})
+        cv2.circle(partial, (510, 274), 4, (40, 40, 220), -1)
+        for _ in range(20):
+            self.assertIsNone(solver.update(partial))
+            self.assertFalse(solver.input_visible)
+        for _ in range(4):
+            self.assertIsNone(solver.update(dot_frame(set())))
+            self.assertIsNone(solver.update(partial))
+        for _ in range(4):
+            self.assertIsNone(solver.update(dot_frame(pattern)))
+            self.assertIsNone(solver.update(dot_frame(set())))
+        for _ in range(4):
+            self.assertIsNone(solver.update(dot_frame(pattern)))
+
+        next_pattern = {(0, 0), (0, 5), (1, 4), (2, 3), (3, 2), (4, 1)}
+        self.assertIsNone(solver.update(dot_frame(next_pattern)))
+        self.assertIsNone(solver.update(dot_frame(next_pattern)))
+        self.assertIsNotNone(solver.update(dot_frame(next_pattern)))
 
     def test_fragment_solver_selects_four_matching_pieces(self) -> None:
         target = np.zeros((240, 240, 3), dtype=np.uint8)

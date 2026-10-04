@@ -156,13 +156,14 @@ class Scanner(threading.Thread):
                     keypad_missing_checks = 0
                     if not keypad_screen_seen:
                         keypad_screen_seen = True
-                        keypad_result_shown = False
-                        self.events.put(("keypad_start", analyzer.dot.current_grid_shape))
+                        if keypad_result_shown:
+                            self.events.put(("status", "키패드 재감지 · 이전 정답 표시 유지"))
+                        else:
+                            self.events.put(("keypad_start", analyzer.dot.current_grid_shape))
                 else:
                     keypad_missing_checks += 1
                     if keypad_missing_checks >= 15:
                         keypad_screen_seen = False
-                        keypad_result_shown = False
                         last_observed_pattern = None
                 if analyzer.dot.input_visible and keypad_result_shown:
                     # 같은 배열이 연속 라운드에 나와도 다음 점멸이 새 분석으로
@@ -204,8 +205,9 @@ class Scanner(threading.Thread):
                 observed_pattern = analyzer.dot.current_pattern
                 if observed_pattern and observed_pattern != last_observed_pattern:
                     if keypad_result_shown:
-                        keypad_result_shown = False
-                        self.events.put(("keypad_start", analyzer.dot.current_grid_shape))
+                        # 관찰 배열은 입력 확인 점멸이나 순간 오인식일 수 있다.
+                        # 솔버가 다음 답을 확정하기 전에 기존 안내를 지우지 않는다.
+                        self.events.put(("status", "새 키패드 패턴 확인 중 · 이전 정답 표시 유지"))
                     if self.config.diagnostic_capture_enabled and not recorder.active:
                         rows, columns = analyzer.dot.current_grid_shape
                         try:
@@ -233,8 +235,7 @@ class Scanner(threading.Thread):
                 # 차단을 적용하지 않는다.
                 if result is not None and (result.puzzle == PuzzleType.DOT_MEMORY or result.signature != last_signature):
                     last_signature = result.signature
-                    if result.puzzle == PuzzleType.DOT_MEMORY:
-                        keypad_result_shown = True
+                    keypad_result_shown = result.puzzle == PuzzleType.DOT_MEMORY
                     if self.config.diagnostic_capture_enabled and not recorder.active:
                         try:
                             session_dir = recorder.start(
