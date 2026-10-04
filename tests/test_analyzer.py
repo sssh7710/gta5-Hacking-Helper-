@@ -12,6 +12,21 @@ from gta_helper.models import PuzzleType, SolveResult
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_empty_transition_target_is_not_marked_as_diagnostic_content(self) -> None:
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        candidates = [np.zeros((80, 80, 3), dtype=np.uint8) for _ in range(8)]
+        for brightness, visible in ((0, False), (60, True)):
+            with self.subTest(brightness=brightness):
+                analyzer = PuzzleAnalyzer()
+                analyzer.dot.update = Mock(return_value=None)
+                analyzer._frame_number = 1
+                target = np.full((300, 220, 3), brightness, dtype=np.uint8)
+                with patch('gta_helper.analyzer.casino_fingerprint_layout', return_value=(target, candidates)):
+                    analyzer.update(frame)
+                self.assertEqual(analyzer.casino_content_visible, visible)
+                analyzer.reset()
+                self.assertFalse(analyzer.casino_content_visible)
+
     def test_cayo_fingerprint_is_not_solved_by_the_app(self) -> None:
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         target = Box(1050, 120, 450, 750)

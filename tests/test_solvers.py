@@ -35,6 +35,24 @@ def kortz_frame(active: set[tuple[int, int]]) -> np.ndarray:
 
 
 class SolverTests(unittest.TestCase):
+    def test_fingerprint_scores_reuse_only_identical_preprocessed_inputs(self) -> None:
+        target = np.zeros((100, 100, 3), dtype=np.uint8)
+        target[20:60, 20:60] = 255
+        candidates = [np.zeros((40, 40, 3), dtype=np.uint8) for _ in range(8)]
+        solver = FragmentFingerprintSolver()
+        with patch('gta_helper.solvers._score_prepared_fingerprint_piece', return_value=.8) as score:
+            solver.solve_regions(target, candidates)
+            solver.solve_regions(target.copy(), [piece.copy() for piece in candidates])
+            self.assertEqual(score.call_count, 8)
+            candidates[0][10:25, 10:25] = 255
+            solver.solve_regions(target, candidates)
+            self.assertEqual(score.call_count, 16)
+            target[60:80, 60:80] = 255
+            solver.solve_regions(target, candidates)
+            self.assertEqual(score.call_count, 24)
+            solver.solve_regions(target, candidates[:-1])
+            self.assertEqual(score.call_count, 31)
+
     def test_dot_solver_selects_supported_regular_axis_over_spurious_circles(self) -> None:
         values = [499] * 4 + [607] * 4 + [715] * 4 + [823] * 4 + [930] * 4 + [442, 550, 877]
         self.assertEqual(DotMemorySolver._regular_axis(values, tolerance=19, size=5), [499, 607, 715, 823, 930])

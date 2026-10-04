@@ -175,6 +175,7 @@ class Scanner(threading.Thread):
                             casino_rearm = True
                         elif (
                             self.config.diagnostic_capture_enabled
+                            and analyzer.casino_content_visible
                             and not recorder.active
                             and (not casino_attempt_seen or casino_rearm)
                         ):
@@ -245,6 +246,10 @@ class Scanner(threading.Thread):
                         except CaptureError as exc:
                             CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
                             self.events.put(("status", str(exc)))
+                    self.events.put(("result", result))
+                # 화면/음성의 중복 안내만 억제한다. 새 진단 세션에서 같은
+                # 정답이 다시 확인돼도 인식 결과 기록까지 빠지면 안 된다.
+                if result is not None and recorder.active:
                     recorder.annotate(
                         expected_puzzle=result.puzzle.name,
                         result_summary=result.summary,
@@ -255,7 +260,6 @@ class Scanner(threading.Thread):
                         ],
                         result_debug=result.debug,
                     )
-                    self.events.put(("result", result))
                 frame_interval = 1 / max(1, self.config.target_fps)
                 remaining = frame_interval - (time.monotonic() - scan_started_at)
                 if remaining > 0:

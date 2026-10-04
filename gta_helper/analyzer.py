@@ -41,6 +41,7 @@ class PuzzleAnalyzer:
         self.casino_layout_checked = False
         self.casino_screen_visible = False
         self.casino_selection_visible = False
+        self.casino_content_visible = False
         self._fingerprint_verification_pending = False
         self._keypad_guard_frames = 0
 
@@ -50,6 +51,7 @@ class PuzzleAnalyzer:
         self.casino_layout_checked = False
         self.casino_screen_visible = False
         self.casino_selection_visible = False
+        self.casino_content_visible = False
         self._fingerprint_verification_pending = False
         self._keypad_guard_frames = 0
 
@@ -71,8 +73,13 @@ class PuzzleAnalyzer:
             fragments = casino_fingerprint_layout(frame)
             self.casino_screen_visible = fragments is not None
             self.casino_selection_visible = False
+            self.casino_content_visible = False
             if fragments is not None:
                 target, candidates = fragments
+                # 판 사이에는 외곽 패널만 남는다. 이때 실패 진단을 시작하지
+                # 않도록 지문선 유무를 별도로 알리되 솔버의 판정은 유지한다.
+                gray = cv2.cvtColor(target, cv2.COLOR_BGR2GRAY)
+                self.casino_content_visible = cv2.countNonZero(cv2.inRange(gray, 40, 255)) >= gray.size * .02
                 # 선택한 조각은 흰색으로 밝아져 원래 무늬와 점수가 달라진다.
                 # 첫 정답을 표시한 뒤 사용자가 입력하는 동안 재판정하지 않는다.
                 self.casino_selection_visible = bool(selected_component_indices(candidates))

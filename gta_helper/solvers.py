@@ -49,18 +49,24 @@ def _prepare_fingerprint_target(target: np.ndarray) -> np.ndarray | None:
     )
 
 
-def _score_prepared_fingerprint_piece(target_gray: np.ndarray, piece: np.ndarray) -> float:
-    """전처리된 전체 지문 안에서 후보 조각을 다중 크기로 찾는다."""
+def _fingerprint_piece_binary(piece: np.ndarray) -> np.ndarray | None:
     piece_gray = cv2.cvtColor(piece, cv2.COLOR_BGR2GRAY) if piece.ndim == 3 else piece
     height, width = piece_gray.shape
     margin_y, margin_x = round(height * .12), round(width * .12)
     piece_gray = piece_gray[margin_y:height - margin_y, margin_x:width - margin_x]
     if min(piece_gray.shape) < 12:
-        return -1.0
+        return None
 
     # 카지노 UI의 점무늬 배경은 후보마다 위치가 달라 명암 상관계수에
     # 잘못 기여한다. 밝은 지문선만 이진화해 실제 선 모양을 비교한다.
-    piece_gray = cv2.threshold(piece_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    return cv2.threshold(piece_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+
+def _score_prepared_fingerprint_piece(target_gray: np.ndarray, piece: np.ndarray) -> float:
+    """전처리된 전체 지문 안에서 후보 조각을 다중 크기로 찾는다."""
+    piece_gray = _fingerprint_piece_binary(piece)
+    if piece_gray is None:
+        return -1.0
     if cv2.countNonZero(piece_gray) < max(12, piece_gray.size * .006):
         return -1.0
 
@@ -384,14 +390,30 @@ class DotMemorySolver:
 
 
 class FragmentFingerprintSolver:
+    def __init__(self) -> None:
+        self._score_key: tuple | None = None
+        self._cached_scores: list[tuple[int, float]] = []
+
     def solve_regions(self, target: np.ndarray, candidates: Iterable[np.ndarray]) -> SolveResult | None:
         prepared_target = _prepare_fingerprint_target(target)
         if prepared_target is None:
             return None
-        scored = [
-            (index + 1, _score_prepared_fingerprint_piece(prepared_target, candidate))
-            for index, candidate in enumerate(candidates)
-        ]
+        candidates = list(candidates)
+        binaries = [_fingerprint_piece_binary(candidate) for candidate in candidates]
+        # 비교 입력이 완전히 같은 직전 한 세트만 저장한다.
+        # JPEG 차이가 이진화 후 사라진 경우에도 판정에 쓰는 픽셀은 같다.
+        key = (prepared_target.shape, prepared_target.dtype.str, prepared_target.tobytes(),
+               tuple(None if piece is None else (piece.shape, piece.dtype.str, piece.tobytes())
+                     for piece in binaries))
+        if key == self._score_key:
+            scored = self._cached_scores.copy()
+        else:
+            scored = [
+                (index + 1, _score_prepared_fingerprint_piece(prepared_target, candidate))
+                for index, candidate in enumerate(candidates)
+            ]
+            self._score_key = key
+            self._cached_scores = scored.copy()
         if len(scored) < 4:
             return None
         scored.sort(key=lambda item: item[1], reverse=True)
