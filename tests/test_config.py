@@ -9,6 +9,58 @@ from gta_helper.config import AppConfig, DIAGNOSTIC_UPLOAD_URL
 
 
 class ConfigTests(unittest.TestCase):
+    def test_non_object_or_invalid_encoding_falls_back_to_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            for content in (b"null", b"[]", b'"invalid"', b"42", b"\xff"):
+                with self.subTest(content=content):
+                    path.write_bytes(content)
+                    self.assertEqual(AppConfig.load(path), AppConfig())
+
+    def test_invalid_custom_keys_recover_without_resetting_valid_preferences(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            for keys in (None, [], "invalid", {"up": None, "select": "Space", "left": []}):
+                with self.subTest(keys=keys):
+                    path.write_text(json.dumps({"custom_keys": keys, "diagnostic_upload_enabled": False,
+                                                "guide_font_size": 18, "update_channel": "release"}), encoding="utf-8")
+                    config = AppConfig.load(path)
+                    self.assertEqual(config.custom_keys["up"], AppConfig().custom_keys["up"])
+                    self.assertEqual(config.custom_keys["left"], AppConfig().custom_keys["left"])
+                    self.assertEqual(config.custom_keys["select"], "Space" if isinstance(keys, dict) else AppConfig().custom_keys["select"])
+                    self.assertFalse(config.diagnostic_upload_enabled)
+                    self.assertEqual(config.guide_font_size, 18)
+                    self.assertEqual(config.update_channel, "release")
+
+    def test_invalid_runtime_values_recover_and_numeric_strings_remain_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            values = {"target_fps": None, "capture_output": -1, "overlay_width": 0,
+                      "overlay_height": [], "overlay_opacity": float("nan"),
+                      "confidence_threshold": float("inf"), "voice_rate": "invalid",
+                      "diagnostic_capture_seconds": -1, "diagnostic_capture_fps": {},
+                      "diagnostic_capture_max_mb": "invalid", "display_mode": [],
+                      "capture_backend": {}, "game_title_patterns": [None],
+                      "input_profile": {}, "diagnostic_dir": None, "guide_font_size": float("inf")}
+            path.write_text(json.dumps(values), encoding="utf-8")
+            config = AppConfig.load(path)
+            defaults = AppConfig()
+            for key in values:
+                self.assertEqual(getattr(config, key), getattr(defaults, key), key)
+            path.write_text(json.dumps({"target_fps": "30", "overlay_x": -100, "confidence_threshold": "0.8"}), encoding="utf-8")
+            config = AppConfig.load(path)
+            self.assertEqual(config.target_fps, 30)
+            self.assertEqual(config.overlay_x, -100)
+            self.assertEqual(config.confidence_threshold, 0.8)
+
+    def test_invalid_toggle_does_not_enable_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            for value in (None, "false", [], 1):
+                with self.subTest(value=value):
+                    path.write_text(json.dumps({"diagnostic_upload_enabled": value}), encoding="utf-8")
+                    self.assertFalse(AppConfig.load(path).diagnostic_upload_enabled)
+
     def test_load_creates_default_and_preserves_custom_keys(self) -> None:
         path = Path(__file__).resolve().parents[1] / "diagnostics" / "_test_config.json"
         try:

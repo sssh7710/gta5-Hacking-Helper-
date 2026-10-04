@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -54,15 +55,55 @@ class AppConfig:
             return config
         try:
             raw: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):
+            return cls()
+        if not isinstance(raw, dict):
             return cls()
         known = {key: raw[key] for key in cls.__dataclass_fields__ if key in raw}
         config = cls(**known)
-        config.custom_keys = {**DEFAULT_KEYS, **config.custom_keys}
-        try:
-            config.guide_font_size = max(8, min(24, int(config.guide_font_size)))
-        except (TypeError, ValueError):
-            config.guide_font_size = 11
+        defaults = cls()
+        # 잘못된 항목만 복구하고 기존의 정상적인 설정은 유지한다.
+        for key in cls.__dataclass_fields__:
+            value, default = getattr(config, key), getattr(defaults, key)
+            if isinstance(default, bool):
+                if not isinstance(value, bool):
+                    # 잘못된 값 때문에 전송 등 선택 기능이 켜지지 않게 한다.
+                    setattr(config, key, False)
+            elif isinstance(default, (int, float)):
+                try:
+                    if isinstance(value, bool) or not math.isfinite(float(value)):
+                        raise ValueError
+                    value = int(value) if isinstance(default, int) else float(value)
+                except (TypeError, ValueError, OverflowError):
+                    value = default
+                if key in {"confidence_threshold", "overlay_opacity"}:
+                    if not 0 <= value <= 1 or (key == "overlay_opacity" and value == 0):
+                        value = default
+                elif key == "capture_output":
+                    if value < 0:
+                        value = default
+                elif key == "guide_font_size":
+                    value = max(8, min(24, value))
+                elif key not in {"overlay_x", "overlay_y"} and value <= 0:
+                    value = default
+                setattr(config, key, value)
+            elif isinstance(default, str) and (not isinstance(value, str) or not value.strip()):
+                setattr(config, key, default)
+        custom_keys = config.custom_keys if isinstance(config.custom_keys, dict) else {}
+        config.custom_keys = {
+            **DEFAULT_KEYS,
+            **{key: value for key, value in custom_keys.items()
+               if isinstance(value, str) and value.strip()},
+        }
+        patterns = config.game_title_patterns
+        if not isinstance(patterns, list) or not patterns or any(
+            not isinstance(value, str) or not value.strip() for value in patterns
+        ):
+            config.game_title_patterns = defaults.game_title_patterns
+        if config.capture_backend not in {"auto", "dxgi", "winrt"}:
+            config.capture_backend = defaults.capture_backend
+        if config.display_mode not in {mode.value for mode in DisplayMode}:
+            config.display_mode = defaults.display_mode
         if not isinstance(config.update_channel, str) or config.update_channel not in UPDATE_CHANNELS:
             config.update_channel = "beta"
         if config.diagnostic_upload_url != DIAGNOSTIC_UPLOAD_URL:
