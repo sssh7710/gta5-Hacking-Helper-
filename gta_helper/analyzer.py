@@ -6,8 +6,8 @@ import cv2
 import numpy as np
 
 from .models import PuzzleType, SolveResult
-from .layout import casino_fingerprint_layout, cayo_layout
-from .solvers import CayoFingerprintSolver, DotMemorySolver, FragmentFingerprintSolver
+from .layout import casino_fingerprint_layout
+from .solvers import DotMemorySolver, FragmentFingerprintSolver
 from .casino_reference import CasinoReferenceSolver
 from .casino import selected_component_indices
 
@@ -36,7 +36,6 @@ class PuzzleAnalyzer:
         self.dot = DotMemorySolver()
         self.fragment = FragmentFingerprintSolver()
         self.casino_reference = CasinoReferenceSolver(Path(__file__).resolve().parents[1] / "assets" / "reference" / "casino_templates.json")
-        self.cayo = CayoFingerprintSolver()
         self._last_fingerprint_signature: tuple | None = None
         self._frame_number = 0
         self.casino_layout_checked = False
@@ -81,12 +80,6 @@ class PuzzleAnalyzer:
                     result = self.fragment.solve_regions(target, candidates)
                     if result is None:
                         result = self.casino_reference.solve(target, candidates)
-            elif result is None:
-                # 카지노 지문 패널을 찾은 프레임을 카요 퍼즐로 다시 해석하면
-                # 처리 중 화면에서 낮은 신뢰도의 오탐이 발생한다.
-                cayo = cayo_layout(frame)
-                if cayo is not None:
-                    result = self.cayo.solve_regions(*cayo)
         if result is None:
             self._last_fingerprint_signature = None
             if self.casino_layout_checked:

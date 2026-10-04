@@ -7,10 +7,29 @@ import cv2
 import numpy as np
 
 from gta_helper.analyzer import PuzzleAnalyzer
+from gta_helper.layout import Box, cayo_layout
 from gta_helper.models import PuzzleType, SolveResult
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_cayo_fingerprint_is_not_solved_by_the_app(self) -> None:
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        target = Box(1050, 120, 450, 750)
+        rows = [Box(300, 90 + row * 105, 270, 75) for row in range(8)]
+        answer = SolveResult(PuzzleType.CAYO_FINGERPRINT, .95, "cayo answer")
+        analyzer = PuzzleAnalyzer()
+        analyzer.dot.update = Mock(return_value=None)
+        with (
+            patch("gta_helper.layout._boxes", return_value=[target, *rows]),
+            patch("gta_helper.analyzer.casino_fingerprint_layout", return_value=None),
+            patch("gta_helper.solvers.CayoFingerprintSolver.solve_regions", return_value=answer) as solve_cayo,
+        ):
+            self.assertIsNotNone(cayo_layout(frame))
+            results = [analyzer.update(frame) for _ in range(6)]
+
+        self.assertTrue(all(result is None for result in results))
+        solve_cayo.assert_not_called()
+
     def test_high_resolution_frame_is_downscaled_for_analysis_only(self) -> None:
         frame = np.zeros((1800, 2880, 3), dtype=np.uint8)
         analyzer = PuzzleAnalyzer()
@@ -38,13 +57,11 @@ class AnalyzerTests(unittest.TestCase):
 
         with (
             patch("gta_helper.analyzer.casino_fingerprint_layout") as casino_layout,
-            patch("gta_helper.analyzer.cayo_layout") as cayo_layout,
         ):
             results = [analyzer.update(frame) for _ in range(3)]
 
         self.assertTrue(all(result is None for result in results))
         casino_layout.assert_not_called()
-        cayo_layout.assert_not_called()
         self.assertFalse(analyzer.casino_layout_checked)
         self.assertEqual(analyzer._keypad_guard_frames, 13)
 
@@ -63,7 +80,7 @@ class AnalyzerTests(unittest.TestCase):
 
         self.assertTrue(all(result is None for result in results))
 
-    def test_selected_casino_components_are_not_reanalyzed_or_treated_as_cayo(self) -> None:
+    def test_selected_casino_components_are_not_reanalyzed(self) -> None:
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         target = np.zeros((300, 220, 3), dtype=np.uint8)
         candidates = [np.full((80, 80, 3), 10, dtype=np.uint8) for _ in range(8)]
@@ -75,13 +92,11 @@ class AnalyzerTests(unittest.TestCase):
 
         with (
             patch("gta_helper.analyzer.casino_fingerprint_layout", return_value=(target, candidates)),
-            patch("gta_helper.analyzer.cayo_layout") as cayo_layout,
         ):
             results = [analyzer.update(frame) for _ in range(4)]
 
         self.assertTrue(all(result is None for result in results))
         analyzer.fragment.solve_regions.assert_not_called()
-        cayo_layout.assert_not_called()
         self.assertTrue(analyzer.casino_layout_checked)
         self.assertTrue(analyzer.casino_screen_visible)
         self.assertTrue(analyzer.casino_selection_visible)
