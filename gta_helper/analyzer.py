@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -38,7 +37,7 @@ class PuzzleAnalyzer:
         self.fragment = FragmentFingerprintSolver()
         self.casino_reference = CasinoReferenceSolver(Path(__file__).resolve().parents[1] / "assets" / "reference" / "casino_templates.json")
         self.cayo = CayoFingerprintSolver()
-        self._seen: Counter[tuple] = Counter()
+        self._last_fingerprint_signature: tuple | None = None
         self._frame_number = 0
         self.casino_layout_checked = False
         self.casino_screen_visible = False
@@ -48,7 +47,7 @@ class PuzzleAnalyzer:
 
     def reset(self) -> None:
         self.dot.reset()
-        self._seen.clear()
+        self._last_fingerprint_signature = None
         self.casino_layout_checked = False
         self.casino_screen_visible = False
         self.casino_selection_visible = False
@@ -89,14 +88,19 @@ class PuzzleAnalyzer:
                 if cayo is not None:
                     result = self.cayo.solve_regions(*cayo)
         if result is None:
+            self._last_fingerprint_signature = None
             if self.casino_layout_checked:
                 self._fingerprint_verification_pending = False
             return None
-        self._seen[result.signature] += 1
         # 지문은 같은 답이 두 프레임 연속 확인될 때만 표시한다.
         if result.puzzle != PuzzleType.DOT_MEMORY:
-            if self._seen[result.signature] < 2:
+            signature = result.signature
+            previous_signature = self._last_fingerprint_signature
+            self._last_fingerprint_signature = signature
+            if signature != previous_signature:
                 self._fingerprint_verification_pending = True
                 return None
             self._fingerprint_verification_pending = False
+        else:
+            self._last_fingerprint_signature = None
         return result

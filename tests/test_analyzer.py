@@ -109,6 +109,42 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(analyzer.dot.update.call_count, 2)
         self.assertEqual(analyzer.fragment.solve_regions.call_count, 2)
 
+    def test_fingerprint_confirmation_restarts_after_missing_or_changed_answer(self) -> None:
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        target = np.zeros((300, 220, 3), dtype=np.uint8)
+        candidates = [np.full((80, 80, 3), 10, dtype=np.uint8) for _ in range(8)]
+        answer_a = SolveResult(PuzzleType.FRAGMENT_FINGERPRINT, .90, "answer A")
+        answer_b = SolveResult(PuzzleType.FRAGMENT_FINGERPRINT, .90, "answer B")
+
+        for interruption in (None, answer_b):
+            with self.subTest(interruption=interruption):
+                analyzer = PuzzleAnalyzer()
+                analyzer._frame_number = 1
+                analyzer.dot.update = Mock(return_value=None)
+                analyzer.fragment.solve_regions = Mock(side_effect=[answer_a, interruption, answer_a, answer_a])
+                analyzer.casino_reference.solve = Mock(return_value=None)
+                with patch("gta_helper.analyzer.casino_fingerprint_layout", return_value=(target, candidates)):
+                    results = [analyzer.update(frame) for _ in range(4)]
+
+                self.assertEqual(results, [None, None, None, answer_a])
+
+    def test_fingerprint_reset_requires_two_new_confirmations(self) -> None:
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        target = np.zeros((300, 220, 3), dtype=np.uint8)
+        candidates = [np.full((80, 80, 3), 10, dtype=np.uint8) for _ in range(8)]
+        answer = SolveResult(PuzzleType.FRAGMENT_FINGERPRINT, .90, "answer")
+        analyzer = PuzzleAnalyzer()
+        analyzer._frame_number = 1
+        analyzer.dot.update = Mock(return_value=None)
+        analyzer.fragment.solve_regions = Mock(return_value=answer)
+        with patch("gta_helper.analyzer.casino_fingerprint_layout", return_value=(target, candidates)):
+            self.assertIsNone(analyzer.update(frame))
+            self.assertEqual(analyzer.update(frame), answer)
+            analyzer.reset()
+            analyzer._frame_number = 1
+            self.assertIsNone(analyzer.update(frame))
+            self.assertEqual(analyzer.update(frame), answer)
+
 
 if __name__ == "__main__":
     unittest.main()
