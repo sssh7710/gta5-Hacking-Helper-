@@ -9,6 +9,23 @@ from gta_helper.updater import UpdateError, apply_update, safe_extract_archive, 
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_beta_users_can_upgrade_to_final_on_both_channels(self) -> None:
+        tag = "v1.0.0"
+        release = {
+            "tag_name": tag, "prerelease": False, "draft": False,
+            "assets": [
+                {"name": f"helper-{tag}-full-files.zip", "browser_download_url": "https://example.test/update.zip"},
+                {"name": f"helper-{tag}-full-files.zip.sha256", "browser_download_url": "https://example.test/update.sha256"},
+            ],
+        }
+        for current in ("1.0.0-beta.23", "1.0.0-beta.24"):
+            for channel in ("beta", "release"):
+                with self.subTest(current=current, channel=channel):
+                    selected = select_update([release], current, channel)
+                    self.assertIsNotNone(selected)
+                    self.assertEqual(selected.tag, tag)
+        self.assertIsNone(select_update([release], "1.0.0"))
+
     def test_beta_versions_are_compared_numerically(self) -> None:
         self.assertGreater(version_key("v1.0.0-beta.10"), version_key("1.0.0-beta.9"))
         self.assertGreater(version_key("1.0.0"), version_key("1.0.0-rc.2"))
