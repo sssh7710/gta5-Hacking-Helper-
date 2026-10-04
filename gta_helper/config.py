@@ -42,7 +42,7 @@ class AppConfig:
     diagnostic_capture_fps: int = 8
     diagnostic_capture_max_mb: int = 1024
     auto_update_enabled: bool = True
-    update_channel: str = "beta"
+    update_channel: str = "release"
     diagnostic_upload_enabled: bool = True
     diagnostic_upload_url: str = DIAGNOSTIC_UPLOAD_URL
     game_title_patterns: list[str] = field(default_factory=lambda: ["grand theft auto", "gta v"])
@@ -60,6 +60,9 @@ class AppConfig:
         if not isinstance(raw, dict):
             return cls()
         known = {key: raw[key] for key in cls.__dataclass_fields__ if key in raw}
+        # 채널 필드가 없던 기존 설정은 종전의 베타 채널 동작을 유지한다.
+        if "update_channel" not in raw:
+            known["update_channel"] = "beta"
         config = cls(**known)
         defaults = cls()
         # 잘못된 항목만 복구하고 기존의 정상적인 설정은 유지한다.
@@ -105,7 +108,7 @@ class AppConfig:
         if config.display_mode not in {mode.value for mode in DisplayMode}:
             config.display_mode = defaults.display_mode
         if not isinstance(config.update_channel, str) or config.update_channel not in UPDATE_CHANNELS:
-            config.update_channel = "beta"
+            config.update_channel = defaults.update_channel
         if config.diagnostic_upload_url != DIAGNOSTIC_UPLOAD_URL:
             config.diagnostic_upload_url = DIAGNOSTIC_UPLOAD_URL
             config.save(path)

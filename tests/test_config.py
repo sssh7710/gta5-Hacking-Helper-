@@ -70,7 +70,7 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue(config.diagnostic_capture_enabled)
             self.assertEqual(config.diagnostic_capture_max_mb, 1024)
             self.assertTrue(config.auto_update_enabled)
-            self.assertEqual(config.update_channel, "beta")
+            self.assertEqual(config.update_channel, "release")
             self.assertTrue(config.diagnostic_upload_enabled)
             self.assertTrue(config.diagnostic_upload_url.startswith("https://"))
             self.assertEqual(config.guide_font_size, 11)
@@ -118,8 +118,13 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps({"update_channel": "release"}), encoding="utf-8")
             self.assertEqual(AppConfig.load(path).update_channel, "release")
 
+            path.write_text(json.dumps({"update_channel": "beta", "diagnostic_upload_enabled": False}), encoding="utf-8")
+            loaded = AppConfig.load(path)
+            self.assertEqual(loaded.update_channel, "beta")
+            self.assertFalse(loaded.diagnostic_upload_enabled)
+
             path.write_text(json.dumps({"update_channel": "invalid"}), encoding="utf-8")
-            self.assertEqual(AppConfig.load(path).update_channel, "beta")
+            self.assertEqual(AppConfig.load(path).update_channel, "release")
 
     def test_load_replaces_user_configured_upload_url(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
