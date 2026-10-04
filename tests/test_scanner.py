@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 
 from app import Scanner
-from gta_helper.capture import DiagnosticFrameRecorder
+from gta_helper.capture import CaptureError, DiagnosticFrameRecorder
 from gta_helper.config import AppConfig
 from gta_helper.models import GridPoint, PuzzleType, SolveResult
 
@@ -91,7 +91,7 @@ class ScannerDiagnosticTests(unittest.TestCase):
         self.assertTrue(any(kind == 'status' and '이전 정답' in payload
                             for kind, payload in events[answer_index + 1:]))
 
-    def run_frames(self, directory, *, result=None, content_visible=True, new_session=False):
+    def run_frames(self, directory, *, result=None, content_visible=True, new_session=False, close_error=False):
         config = AppConfig()
         config.diagnostic_dir = directory
         config.target_fps = 1000
@@ -107,6 +107,8 @@ class ScannerDiagnosticTests(unittest.TestCase):
         analyzer.update.return_value = result
         recorder = DiagnosticFrameRecorder(directory)
         recorder.annotate = Mock(wraps=recorder.annotate)
+        if close_error:
+            recorder.close = Mock(side_effect=CaptureError('synthetic finalization failure'))
         if new_session:
             recorder.add = Mock(side_effect=lambda _frame: recorder.finish())
         capture = Mock(backend='test')
@@ -127,9 +129,17 @@ class ScannerDiagnosticTests(unittest.TestCase):
             patch('app.DiagnosticFrameRecorder', return_value=recorder),
             patch('app.DxCapture', return_value=capture),
             patch('app.find_game_window', return_value=object()),
+            patch('app.CRASH_REPORTER.record'),
         ):
             scanner.run()
         return scanner, recorder
+
+    def test_capture_is_closed_when_final_diagnostic_save_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            scanner, _recorder = self.run_frames(directory, close_error=True)
+            scanner._capture.close.assert_called_once()
+            self.assertTrue(any(kind == 'status' and payload == 'synthetic finalization failure'
+                                for kind, payload in scanner.events.queue))
 
     def test_duplicate_display_answer_still_annotates_active_diagnostic(self):
         answer = SolveResult(PuzzleType.FRAGMENT_FINGERPRINT, .86, 'synthetic answer')

@@ -4,13 +4,56 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
-from gta_helper.capture import DiagnosticFrameRecorder, DxCapture, _pixel_standard_deviation
+from gta_helper.capture import CaptureError, DiagnosticFrameRecorder, DxCapture, _pixel_standard_deviation
 
 
 class DiagnosticFrameRecorderTests(unittest.TestCase):
+    def test_finalization_failure_preserves_and_retries_frozen_session(self) -> None:
+        frame = np.zeros((90, 160, 3), dtype=np.uint8)
+        for operation in ('write_text', 'mkdir', 'rename'):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as directory:
+                now = [10.0]
+                recorder = DiagnosticFrameRecorder(directory, clock=lambda: now[0])
+                started = recorder.start(frame, 'synthetic', {'puzzle': 'DOT_MEMORY'})
+                recorder.annotate(result_summary='synthetic answer', result_confidence=.9)
+                now[0] = 18.0
+                with patch.object(Path, operation, side_effect=PermissionError('synthetic lock')) as attempt:
+                    with self.assertRaises(CaptureError):
+                        recorder.add(frame)
+                    self.assertTrue(recorder.active)
+                    self.assertTrue(started.exists())
+                    frames = list(started.glob('frame_*.jpg'))
+                    self.assertFalse(recorder.annotate(result_summary='next round', result_confidence=.2))
+                    now[0] = 18.5
+                    self.assertIsNone(recorder.add(frame))
+                    self.assertEqual(attempt.call_count, 1)
+                    self.assertEqual(list(started.glob('frame_*.jpg')), frames)
+                now[0] = 19.0
+                completed = recorder.add(frame)
+                self.assertIsNotNone(completed)
+                self.assertFalse(recorder.active)
+                metadata = json.loads((completed / 'session.json').read_text(encoding='utf-8'))
+                self.assertEqual(metadata['result_summary'], 'synthetic answer')
+                self.assertEqual(metadata['answer_outcome'], 'success')
+                self.assertEqual(metadata['frame_count'], len(frames))
+
+    def test_close_retries_failed_finalization_immediately(self) -> None:
+        frame = np.zeros((90, 160, 3), dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = DiagnosticFrameRecorder(directory)
+            recorder.start(frame)
+            with patch.object(Path, 'rename', side_effect=PermissionError('synthetic lock')):
+                with self.assertRaises(CaptureError):
+                    recorder.finish()
+            completed = recorder.close()
+            self.assertIsNotNone(completed)
+            self.assertEqual(completed.parent.name, 'failure')
+            self.assertFalse(recorder.active)
+
     def test_fast_pixel_standard_deviation_matches_numpy(self) -> None:
         frames = [
             np.zeros((90, 160, 3), dtype=np.uint8),

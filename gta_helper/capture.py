@@ -53,6 +53,8 @@ class DiagnosticFrameRecorder:
         self._next_frame_at = 0.0
         self._frame_number = 0
         self._metadata: dict[str, object] = {}
+        self._finalization_pending = False
+        self._next_finalize_at = 0.0
 
     @property
     def active(self) -> bool:
@@ -74,6 +76,8 @@ class DiagnosticFrameRecorder:
         self._started_at = self._clock()
         self._next_frame_at = self._started_at
         self._frame_number = 0
+        self._finalization_pending = False
+        self._next_finalize_at = 0.0
         self._metadata = {
             "label": label,
             "started_at": started.isoformat(timespec="milliseconds"),
@@ -92,6 +96,10 @@ class DiagnosticFrameRecorder:
         if self._session_dir is None:
             return None
         now = self._clock()
+        if self._finalization_pending:
+            # 완료한 자료는 고정한 채 저장만 재시도한다. 잠긴 폴더 때문에
+            # 캡처 파일이 무한히 늘어나거나 매 프레임 디스크를 두드리지 않는다.
+            return self.finish() if now >= self._next_finalize_at else None
         if now - self._started_at >= self.duration_seconds:
             self._write(frame, now, force=True)
             return self.finish()
@@ -117,7 +125,7 @@ class DiagnosticFrameRecorder:
         self._next_frame_at = now + (1.0 / self.fps)
 
     def annotate(self, *, expected_puzzle: str | None = None, **metadata: object) -> bool:
-        if self._session_dir is None:
+        if self._session_dir is None or self._finalization_pending:
             return False
         if expected_puzzle is not None and self._metadata.get("puzzle") != expected_puzzle:
             return False
@@ -144,13 +152,15 @@ class DiagnosticFrameRecorder:
         except (TypeError, ValueError):
             answer_provided = False
         outcome = "success" if answer_provided else "failure"
-        self._metadata.update({
-            "completed_at": datetime.now().isoformat(timespec="milliseconds"),
-            "frame_count": self._frame_number,
-            "answer_outcome": outcome,
-            "answer_provided": answer_provided,
-            "answer_confidence_threshold": self.answer_confidence_threshold,
-        })
+        if not self._finalization_pending:
+            self._metadata.update({
+                "completed_at": datetime.now().isoformat(timespec="milliseconds"),
+                "frame_count": self._frame_number,
+                "answer_outcome": outcome,
+                "answer_provided": answer_provided,
+                "answer_confidence_threshold": self.answer_confidence_threshold,
+            })
+            self._finalization_pending = True
         try:
             (session_dir / "session.json").write_text(
                 json.dumps(self._metadata, ensure_ascii=False, indent=2, default=self._json_default),
@@ -162,11 +172,14 @@ class DiagnosticFrameRecorder:
             session_dir.rename(categorized_session_dir)
             session_dir = categorized_session_dir
         except OSError as exc:
+            self._next_finalize_at = self._clock() + 1.0
             raise CaptureError(f"인식 개선 자료를 저장하고 분류하지 못했습니다: {session_dir}") from exc
-        finally:
-            self._session_dir = None
-            self._metadata = {}
-            self._frame_number = 0
+        # 저장과 분류가 모두 끝난 뒤에만 수집 상태를 비운다.
+        self._session_dir = None
+        self._metadata = {}
+        self._frame_number = 0
+        self._finalization_pending = False
+        self._next_finalize_at = 0.0
         self.prune_old_sessions(protected=session_dir)
         return session_dir
 

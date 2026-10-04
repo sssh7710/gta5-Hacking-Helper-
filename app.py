@@ -269,11 +269,16 @@ class Scanner(threading.Thread):
             CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
             self.events.put(("state", (AppState.ERROR, f"스캐너 오류: {exc}")))
         finally:
-            completed_session = recorder.close()
-            if completed_session is not None:
-                self.events.put(("diagnostic_completed", completed_session))
-            if self._capture:
-                self._capture.close()
+            try:
+                completed_session = recorder.close()
+                if completed_session is not None:
+                    self.events.put(("diagnostic_completed", completed_session))
+            except CaptureError as exc:
+                CRASH_REPORTER.record(type(exc), exc, exc.__traceback__, "scanner")
+                self.events.put(("status", str(exc)))
+            finally:
+                if self._capture:
+                    self._capture.close()
 
 
 class HelperApp:
