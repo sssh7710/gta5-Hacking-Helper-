@@ -27,6 +27,43 @@ def casino_screen(width: int, height: int, *, include_target_inner: bool = True)
 
 
 class CasinoLayoutTests(unittest.TestCase):
+    def test_occluded_component_panel_uses_aligned_tiles_not_unrelated_panel(self) -> None:
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        target_panel = Box(860, 80, 690, 700)
+        unrelated = Box(10, 455, 320, 542)
+        tiles = []
+        for row in range(4):
+            for column in range(2):
+                index = row * 2 + column
+                x, y = 471 + column * 144, 267 + row * 144
+                frame[y:y + 126, x:x + 126] = 40 + index * 20
+                tiles.append(Box(x, y, 126, 126))
+        # 안내창이 첫 타일과 외곽 패널의 왼쪽 일부를 가린 경우를 재현한다.
+        tiles[0] = Box(480, 267, 117, 126)
+        with patch('gta_helper.layout._boxes', return_value=[target_panel, unrelated, *tiles]):
+            layout = casino_fingerprint_layout(frame)
+        self.assertIsNotNone(layout)
+        assert layout is not None
+        self.assertEqual(len(layout[1]), 8)
+        for index, candidate in enumerate(layout[1]):
+            self.assertEqual(int(candidate[candidate.shape[0] // 2, candidate.shape[1] // 2, 0]), 40 + index * 20)
+
+    def test_unrelated_left_panel_without_component_tiles_is_rejected(self) -> None:
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        with patch('gta_helper.layout._boxes', return_value=[Box(860, 80, 690, 700), Box(10, 455, 320, 542)]):
+            self.assertIsNone(casino_fingerprint_layout(frame))
+
+    def test_component_tile_fallback_rejects_missing_or_irregular_cells(self) -> None:
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        target = Box(860, 80, 690, 700)
+        regular = [Box(471 + column * 144, 267 + row * 144, 126, 126)
+                   for row in range(4) for column in range(2)]
+        irregular = [Box(471 + column * 144, y, 126, 126)
+                     for y in (200, 340, 490, 700) for column in range(2)]
+        for tiles in (regular[:-1], irregular):
+            with self.subTest(tiles=tiles), patch('gta_helper.layout._boxes', return_value=[target, *tiles]):
+                self.assertIsNone(casino_fingerprint_layout(frame))
+
     def test_cayo_layout_requires_eight_vertical_rows(self) -> None:
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         target = Box(700, 80, 300, 500)

@@ -62,6 +62,49 @@ def fragment_layout(frame: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]] | 
     return None
 
 
+def _casino_component_tiles(boxes: list[Box], target: Box) -> list[Box] | None:
+    """외곽 패널이 가려졌을 때만 검증된 2열·4행 타일 격자를 복원한다."""
+    tiles = [box for box in boxes
+             if target.x - target.w * .8 < box.x < target.x
+             and box.x + box.w < target.x
+             and target.y < box.y < target.y + target.h
+             and target.w * .10 < box.w < target.w * .30
+             and .75 <= box.w / max(box.h, 1) <= 1.35]
+
+    def centers(values: list[float], tolerance: float) -> list[float]:
+        groups: list[list[float]] = []
+        for value in sorted(values):
+            if not groups or value - groups[-1][-1] > tolerance:
+                groups.append([value])
+            else:
+                groups[-1].append(value)
+        return [float(np.median(group)) for group in groups]
+
+    for seed in sorted(tiles, key=lambda box: box.area, reverse=True):
+        peers = [box for box in tiles
+                 if .80 <= box.w / seed.w <= 1.20 and .80 <= box.h / seed.h <= 1.20]
+        if len(peers) < 8:
+            continue
+        width = round(float(np.median([box.w for box in peers])))
+        height = round(float(np.median([box.h for box in peers])))
+        xs = centers([box.x + box.w / 2 for box in peers], width * .2)
+        ys = centers([box.y + box.h / 2 for box in peers], height * .2)
+        if len(xs) != 2 or len(ys) != 4:
+            continue
+        if not 1.05 <= (xs[1] - xs[0]) / width <= 1.60:
+            continue
+        steps = np.diff(ys)
+        if not all(1.05 <= step / height <= 1.60 for step in steps) or max(steps) / min(steps) > 1.15:
+            continue
+        if not all(any(abs(box.x + box.w / 2 - x) <= width * .2
+                       and abs(box.y + box.h / 2 - y) <= height * .2 for box in peers)
+                   for y in ys for x in xs):
+            continue
+        return [Box(round(x - width / 2), round(y - height / 2), width, height)
+                for y in ys for x in xs]
+    return None
+
+
 def casino_fingerprint_layout(frame: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]] | None:
     """실제 카지노 지문 UI의 큰 우측 패널과 좌측 2×4 후보 격자를 찾는다.
 
@@ -97,10 +140,14 @@ def casino_fingerprint_layout(frame: np.ndarray) -> tuple[np.ndarray, list[np.nd
     target = frame[target_y:target_y + target_h, target_x:target_x + target_w].copy()
     component_panels = [
         box for box in boxes
-        if box.x + box.w < target_panel.x and box.area > area * .07 and .40 <= box.w / max(box.h, 1) <= 1.0
+        if target_panel.x - target_panel.w * .9 < box.x
+        and box.x + box.w < target_panel.x and box.area > area * .07 and .40 <= box.w / max(box.h, 1) <= 1.0
     ]
     if not component_panels:
-        return None
+        tiles = _casino_component_tiles(boxes, target_panel)
+        if tiles is None or min(target.shape[:2]) < 24:
+            return None
+        return target, [tile.crop(frame) for tile in tiles]
     components = max(component_panels, key=lambda box: box.area)
     # 제공된 연습 영상의 COMPONETS 패널: 두 열, 네 행의 상대 좌표.
     x_positions = (.196, .510)
